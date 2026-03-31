@@ -1,955 +1,614 @@
 #!/usr/bin/env python3
 """
-Desktop Widget — GTK3 + Cairo glassmorphism desktop widget for Ubuntu.
-Sections: Clock/Calendar · Profile/Weather · Music · App Launcher · Quick Toggles
+Desktop Widget - Glassmorphism Panel
+Sections: Profile + Weather | Clock | Calendar | Music | App Launcher | Quick Toggles
+Always-on-desktop, center screen, no titlebar, transparent background
 """
 
 import gi
-gi.require_version("Gtk", "3.0")
-gi.require_version("Gdk", "3.0")
-gi.require_version("Pango", "1.0")
-gi.require_version("PangoCairo", "1.0")
-
-from gi.repository import Gtk, Gdk, GLib, Pango, PangoCairo
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+gi.require_version('GdkPixbuf', '2.0')
+from gi.repository import Gtk, Gdk, GLib, GdkPixbuf, Pango, PangoCairo
 import cairo
-import subprocess
-import threading
 import datetime
-import math
+import subprocess
 import os
-import sys
+import math
+import threading
+import calendar as cal_mod
 
-try:
-    import requests
-    HAS_REQUESTS = True
-except ImportError:
-    HAS_REQUESTS = False
+# ─── CONFIG ───────────────────────────────────────────────────────────────────
+USER_NAME   = "Jaimin Detroja"           # ← Change this
+PROFILE_IMG = os.path.expanduser("~/.config/desktop-widget/profile.jpg")
+CITY        = "Vadodara"            # ← Your city for weather
+WIDGET_W    = 650
+WIDGET_H    = 630
 
-# ─────────────────────────────────────────────
-# CONFIG
-# ─────────────────────────────────────────────
-USERNAME = os.environ.get("USER") or os.environ.get("LOGNAME") or "User"
-PROFILE_IMAGE_PATH = os.path.expanduser("~/Pictures/profile.jpg")
-CITY = "auto"          # set to e.g. "London" for a specific city
+APPS = [
+    {"name": "Chrome",   "icon": "🌐", "cmd": "google-chrome"},
+    {"name": "Discord",  "icon": "💬", "cmd": "discord"},
+    {"name": "Brave",    "icon": "🦁", "cmd": "brave-browser"},
+    {"name": "YouTube",  "icon": "▶",  "cmd": "xdg-open https://youtube.com"},
+    {"name": "Calc",     "icon": "🧮", "cmd": "gnome-calculator"},
+]
 
-# Color helpers (RGBA 0‥1)
-BG_DARK        = (0.039, 0.039, 0.059, 0.92)   # #0a0a0f  semi-transparent
-GLASS_CARD     = (1.0,   1.0,   1.0,   0.07)
-ACCENT         = (0.0,   0.831, 1.0,   1.0)    # #00d4ff
-ACCENT_DIM     = (0.0,   0.831, 1.0,   0.25)
-TEXT_PRIMARY   = (1.0,   1.0,   1.0,   0.95)
-TEXT_SECONDARY = (1.0,   1.0,   1.0,   0.55)
-GLOW_BORDER    = (0.0,   0.831, 1.0,   0.35)
+# ─── COLORS ──────────────────────────────────────────────────────────────────
+def rgba(r, g, b, a=1.0): return (r/255, g/255, b/255, a)
 
-WIDGET_WIDTH  = 420
-SECTION_PAD   = 16
-CORNER_RADIUS = 18
-
-# ─────────────────────────────────────────────
-# UTILITY — rounded rectangle path
-# ─────────────────────────────────────────────
-
-def rounded_rect(ctx, x, y, w, h, r):
-    ctx.new_sub_path()
-    ctx.arc(x + r,     y + r,     r, math.pi,       1.5 * math.pi)
-    ctx.arc(x + w - r, y + r,     r, 1.5 * math.pi, 0)
-    ctx.arc(x + w - r, y + h - r, r, 0,              0.5 * math.pi)
-    ctx.arc(x + r,     y + h - r, r, 0.5 * math.pi, math.pi)
-    ctx.close_path()
+C_BG         = rgba(12, 10, 35, 0.88)
+C_CARD       = rgba(255, 255, 255, 0.07)
+C_BORDER     = rgba(255, 255, 255, 0.14)
+C_WHITE      = (1.0, 1.0, 1.0, 1.0)
+C_DIM        = (1.0, 1.0, 1.0, 0.50)
+C_FAINT      = (1.0, 1.0, 1.0, 0.22)
+C_PURPLE     = rgba(161, 141, 250, 1.0)
+C_BLUE       = rgba(100, 126, 234, 1.0)
+C_ACTIVE_BG  = rgba(161, 141, 250, 0.28)
 
 
-def draw_glass_card(ctx, x, y, w, h, r=CORNER_RADIUS):
-    """Draw a semi-transparent glass card with a subtle border glow."""
-    # Background fill
-    ctx.save()
-    rounded_rect(ctx, x, y, w, h, r)
-    ctx.set_source_rgba(*GLASS_CARD)
-    ctx.fill_preserve()
-    # Border glow
-    ctx.set_source_rgba(*GLOW_BORDER)
-    ctx.set_line_width(1.2)
-    ctx.stroke()
-    ctx.restore()
+def set_rgba(cr, c):
+    cr.set_source_rgba(*c)
 
 
-def set_color(ctx, rgba):
-    ctx.set_source_rgba(*rgba)
+def rounded_rect(cr, x, y, w, h, r=14):
+    cr.new_sub_path()
+    cr.arc(x+r,     y+r,     r, math.pi,      1.5*math.pi)
+    cr.arc(x+w-r,   y+r,     r, 1.5*math.pi,  0)
+    cr.arc(x+w-r,   y+h-r,   r, 0,             0.5*math.pi)
+    cr.arc(x+r,     y+h-r,   r, 0.5*math.pi,  math.pi)
+    cr.close_path()
 
 
-def pango_layout(widget, ctx, text, size_pts, bold=False, mono=False):
-    layout = PangoCairo.create_layout(ctx)
-    family = "JetBrains Mono" if mono else "Outfit"
-    weight = "Bold" if bold else "Regular"
-    layout.set_font_description(
-        Pango.font_description_from_string(f"{family} {weight} {size_pts}")
-    )
-    layout.set_text(text, -1)
-    return layout
+def glass_card(cr, x, y, w, h, r=16):
+    rounded_rect(cr, x, y, w, h, r)
+    set_rgba(cr, C_CARD)
+    cr.fill()
+    rounded_rect(cr, x, y, w, h, r)
+    set_rgba(cr, C_BORDER)
+    cr.set_line_width(1.0)
+    cr.stroke()
+    # top highlight
+    cr.save()
+    rounded_rect(cr, x, y, w, h, r)
+    cr.clip()
+    shine = cairo.LinearGradient(x, y, x, y+36)
+    shine.add_color_stop_rgba(0, 1, 1, 1, 0.10)
+    shine.add_color_stop_rgba(1, 1, 1, 1, 0.00)
+    cr.set_source(shine)
+    cr.rectangle(x, y, w, 36)
+    cr.fill()
+    cr.restore()
 
 
-# ─────────────────────────────────────────────
-# BACKGROUND AURORA ANIMATION
-# ─────────────────────────────────────────────
+# ─── UTILITIES ───────────────────────────────────────────────────────────────
 
-class AuroraBackground:
+def run_cmd(cmd, timeout=3):
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+def launch(cmd):
+    subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# ─── WEATHER ─────────────────────────────────────────────────────────────────
+
+class Weather:
     def __init__(self):
-        self.phase = 0.0
+        self.temp = "—"
+        self.desc = "Fetching…"
+        self.icon = "🌤"
+        self._do_fetch()
 
-    def tick(self):
-        self.phase += 0.008
-
-    def draw(self, ctx, w, h):
-        # Dark base
-        ctx.set_source_rgba(*BG_DARK)
-        ctx.paint()
-
-        # Soft aurora blobs
-        blobs = [
-            (0.3 + 0.15 * math.sin(self.phase),
-             0.25 + 0.1  * math.cos(self.phase * 0.7),
-             0.35, (0.0, 0.4, 0.8, 0.06)),
-            (0.7 + 0.1  * math.cos(self.phase * 0.9),
-             0.6 + 0.15  * math.sin(self.phase * 1.1),
-             0.30, (0.0, 0.6, 0.4, 0.05)),
-            (0.5 + 0.1  * math.sin(self.phase * 1.3),
-             0.8 + 0.05  * math.cos(self.phase * 0.6),
-             0.25, (0.4, 0.0, 0.8, 0.04)),
-        ]
-        for bx, by, br, color in blobs:
-            grd = cairo.RadialGradient(
-                bx * w, by * h, 0,
-                bx * w, by * h, br * max(w, h)
-            )
-            grd.add_color_stop_rgba(0,   *color)
-            grd.add_color_stop_rgba(1,   color[0], color[1], color[2], 0)
-            ctx.set_source(grd)
-            ctx.paint()
-
-
-# ─────────────────────────────────────────────
-# SECTION: CLOCK + CALENDAR
-# ─────────────────────────────────────────────
-
-class ClockSection:
-    DAYS   = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-    MONTHS = ["January","February","March","April","May","June",
-              "July","August","September","October","November","December"]
-
-    def get_height(self):
-        return 230
-
-    def draw(self, ctx, widget, x, y, w):
-        h = self.get_height()
-        draw_glass_card(ctx, x, y, w, h)
-
-        now = datetime.datetime.now()
-
-        # ── Clock digits ──────────────────────────────────
-        time_str = now.strftime("%H:%M:%S")
-        layout = pango_layout(widget, ctx, time_str, 48, bold=True, mono=True)
-        pw, ph = layout.get_pixel_size()
-        ctx.save()
-        ctx.translate(x + (w - pw) / 2, y + 18)
-        set_color(ctx, ACCENT)
-        PangoCairo.show_layout(ctx, layout)
-        ctx.restore()
-
-        # ── Date ──────────────────────────────────────────
-        day_name = self.DAYS[now.weekday()]
-        month    = self.MONTHS[now.month - 1]
-        date_str = f"{day_name}, {month} {now.day}"
-        layout = pango_layout(widget, ctx, date_str, 13, bold=False)
-        pw, ph = layout.get_pixel_size()
-        ctx.save()
-        ctx.translate(x + (w - pw) / 2, y + 76)
-        set_color(ctx, TEXT_SECONDARY)
-        PangoCairo.show_layout(ctx, layout)
-        ctx.restore()
-
-        # ── Mini calendar ──────────────────────────────────
-        self._draw_calendar(ctx, widget, x + SECTION_PAD, y + 100, w - 2*SECTION_PAD, now)
-
-    def _draw_calendar(self, ctx, widget, cx, cy, cw, now):
-        import calendar
-        cell_w = cw / 7
-        cell_h = 18
-
-        day_letters = ["Mo","Tu","We","Th","Fr","Sa","Su"]
-        for i, d in enumerate(day_letters):
-            layout = pango_layout(widget, ctx, d, 8)
-            pw, _ = layout.get_pixel_size()
-            ctx.save()
-            ctx.translate(cx + i * cell_w + (cell_w - pw) / 2, cy)
-            set_color(ctx, TEXT_SECONDARY)
-            PangoCairo.show_layout(ctx, layout)
-            ctx.restore()
-
-        cal = calendar.monthcalendar(now.year, now.month)
-        for row_idx, week in enumerate(cal):
-            for col_idx, day in enumerate(week):
-                if day == 0:
-                    continue
-                tx = cx + col_idx * cell_w
-                ty = cy + (row_idx + 1) * cell_h + 4
-                is_today = (day == now.day)
-
-                if is_today:
-                    # Cyan highlight circle
-                    ctx.save()
-                    ctx.arc(tx + cell_w / 2, ty + cell_h / 2 - 1, cell_h / 2 - 1, 0, 2*math.pi)
-                    set_color(ctx, ACCENT_DIM)
-                    ctx.fill()
-                    ctx.restore()
-
-                layout = pango_layout(widget, ctx, str(day), 9, bold=is_today)
-                pw, ph = layout.get_pixel_size()
-                ctx.save()
-                ctx.translate(tx + (cell_w - pw) / 2, ty + (cell_h - ph) / 2 - 1)
-                set_color(ctx, ACCENT if is_today else TEXT_PRIMARY)
-                PangoCairo.show_layout(ctx, layout)
-                ctx.restore()
+    def _do_fetch(self):
+        def fetch():
+            try:
+                import urllib.request
+                url = f"https://wttr.in/{CITY}?format=%t+%C"
+                with urllib.request.urlopen(url, timeout=6) as resp:
+                    data = resp.read().decode().strip()
+                parts = data.split(" ", 1)
+                self.temp = parts[0].replace("+", "").strip()
+                raw_desc = parts[1].strip() if len(parts) > 1 else ""
+                self.desc = raw_desc[:18]
+                d = raw_desc.lower()
+                if "sun" in d or "clear" in d: self.icon = "☀"
+                elif "cloud" in d:              self.icon = "⛅"
+                elif "rain" in d:               self.icon = "🌧"
+                elif "snow" in d:               self.icon = "❄"
+                elif "thunder" in d:            self.icon = "⛈"
+                elif "fog" in d or "mist" in d: self.icon = "🌫"
+                else:                           self.icon = "🌤"
+            except Exception:
+                self.temp = "N/A"
+                self.desc = "No network"
+                self.icon = "☁"
+        threading.Thread(target=fetch, daemon=True).start()
+        GLib.timeout_add_seconds(600, self._do_fetch)
 
 
-# ─────────────────────────────────────────────
-# SECTION: PROFILE + WEATHER
-# ─────────────────────────────────────────────
+# ─── STATE ───────────────────────────────────────────────────────────────────
 
-class ProfileSection:
+class State:
     def __init__(self):
-        self.weather_text  = "Fetching…"
-        self.weather_icon  = "🌡"
-        self.uptime_text   = ""
-        self._pixbuf       = None
-        self._load_avatar()
-        self._fetch_weather_async()
-        GLib.timeout_add(1_800_000, self._fetch_weather_async)  # refresh every 30 min (1,800,000 ms)
-
-    def _load_avatar(self):
-        from gi.repository import GdkPixbuf
-        size = 70
-        if os.path.exists(PROFILE_IMAGE_PATH):
-            try:
-                self._pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
-                    PROFILE_IMAGE_PATH, size, size, True)
-                return
-            except Exception:
-                pass
-        # Fallback: None → draw placeholder
-        self._pixbuf = None
-
-    def _fetch_weather_async(self):
-        def _fetch():
-            if not HAS_REQUESTS:
-                GLib.idle_add(self._set_weather, "requests not installed", "⚠")
-                return
-            try:
-                url  = f"https://wttr.in/{CITY}?format=j1"
-                resp = requests.get(url, timeout=8)
-                data = resp.json()
-                cur  = data["current_condition"][0]
-                temp = cur["temp_C"]
-                desc = cur["weatherDesc"][0]["value"]
-                code = int(cur["weatherCode"])
-                icon = self._weather_icon(code)
-                GLib.idle_add(self._set_weather, f"{temp}°C  {desc}", icon)
-            except Exception:
-                GLib.idle_add(self._set_weather, "Weather unavailable", "🌫")
-        threading.Thread(target=_fetch, daemon=True).start()
-        return True  # keep GLib timer alive
-
-    def _set_weather(self, text, icon):
-        self.weather_text = text
-        self.weather_icon = icon
-
-    @staticmethod
-    def _weather_icon(code):
-        if code in (113,):            return "☀"
-        if code in (116, 119):        return "⛅"
-        if code in (122, 143):        return "☁"
-        if code in (176, 185, 293, 296, 299, 302, 305, 308): return "🌧"
-        if code in (200, 386, 389):   return "⛈"
-        if code in (179, 182, 227, 230, 323, 326, 329, 332, 335, 338, 350, 362, 365, 371, 374, 377): return "❄"
-        return "🌡"
-
-    def _get_uptime(self):
-        try:
-            with open("/proc/uptime") as f:
-                secs = float(f.read().split()[0])
-            h = int(secs // 3600)
-            m = int((secs % 3600) // 60)
-            return f"Up {h}h {m}m"
-        except Exception:
-            return ""
-
-    def get_height(self):
-        return 120
-
-    def draw(self, ctx, widget, x, y, w):
-        h = self.get_height()
-        draw_glass_card(ctx, x, y, w, h)
-
-        AV = 70   # avatar size
-        av_x = x + SECTION_PAD
-        av_y = y + (h - AV) // 2
-
-        # ── Avatar circle ──────────────────────────────────
-        ctx.save()
-        ctx.arc(av_x + AV/2, av_y + AV/2, AV/2, 0, 2*math.pi)
-        ctx.clip()
-        if self._pixbuf:
-            Gdk.cairo_set_source_pixbuf(ctx, self._pixbuf, av_x, av_y)
-            ctx.paint()
-        else:
-            # Placeholder gradient
-            grd = cairo.RadialGradient(av_x + AV/2, av_y + AV/2, 0,
-                                       av_x + AV/2, av_y + AV/2, AV/2)
-            grd.add_color_stop_rgba(0, 0.0, 0.5, 0.7, 1)
-            grd.add_color_stop_rgba(1, 0.0, 0.2, 0.4, 1)
-            ctx.set_source(grd)
-            ctx.paint()
-            # Person silhouette
-            ctx.set_source_rgba(1, 1, 1, 0.5)
-            ctx.arc(av_x + AV/2, av_y + AV*0.35, AV*0.18, 0, 2*math.pi)
-            ctx.fill()
-            ctx.arc(av_x + AV/2, av_y + AV*0.80, AV*0.28, math.pi, 0)
-            ctx.fill()
-        ctx.restore()
-
-        # Cyan ring around avatar
-        ctx.arc(av_x + AV/2, av_y + AV/2, AV/2 + 1.5, 0, 2*math.pi)
-        set_color(ctx, ACCENT)
-        ctx.set_line_width(1.5)
-        ctx.stroke()
-
-        text_x = av_x + AV + 14
-        # ── Username ──────────────────────────────────────
-        layout = pango_layout(widget, ctx, USERNAME, 15, bold=True)
-        ctx.save()
-        ctx.translate(text_x, y + 20)
-        set_color(ctx, TEXT_PRIMARY)
-        PangoCairo.show_layout(ctx, layout)
-        ctx.restore()
-
-        # ── Weather ───────────────────────────────────────
-        weather_line = f"{self.weather_icon}  {self.weather_text}"
-        layout = pango_layout(widget, ctx, weather_line, 10)
-        ctx.save()
-        ctx.translate(text_x, y + 44)
-        set_color(ctx, TEXT_SECONDARY)
-        PangoCairo.show_layout(ctx, layout)
-        ctx.restore()
-
-        # ── Uptime badge ──────────────────────────────────
-        uptime = self._get_uptime()
-        if uptime:
-            layout = pango_layout(widget, ctx, uptime, 8)
-            pw, ph = layout.get_pixel_size()
-            bx = text_x
-            by = y + 68
-            draw_glass_card(ctx, bx - 4, by - 2, pw + 10, ph + 4, r=6)
-            ctx.save()
-            ctx.translate(bx + 1, by)
-            set_color(ctx, ACCENT)
-            PangoCairo.show_layout(ctx, layout)
-            ctx.restore()
+        self.cd_angle   = 0.0
+        self.cd_playing = False
+        self.wifi       = "enabled" in run_cmd("nmcli radio wifi").lower()
+        self.bt         = "yes"     in run_cmd("bluetoothctl show | grep Powered").lower()
+        self.night      = False
+        self.bright     = True
 
 
-# ─────────────────────────────────────────────
-# SECTION: MUSIC CONTROL
-# ─────────────────────────────────────────────
+# ─── MAIN WINDOW ─────────────────────────────────────────────────────────────
 
-class MusicSection:
-    def __init__(self, widget_ref):
-        self.widget_ref   = widget_ref
-        self.title        = "Nothing playing"
-        self.artist       = ""
-        self.playing      = False
-        self.disc_angle   = 0.0
-        self.scroll_off   = 0
-        self._album_pixbuf = None
-        self._fetch()
-        GLib.timeout_add(3000, self._fetch)
-
-    def _run(self, *args):
-        try:
-            return subprocess.check_output(
-                ["playerctl"] + list(args),
-                stderr=subprocess.DEVNULL, text=True
-            ).strip()
-        except Exception:
-            return ""
-
-    def _fetch(self):
-        def _do():
-            status = self._run("status")
-            title  = self._run("metadata", "title")
-            artist = self._run("metadata", "artist")
-            if not title:
-                title  = "Browser Audio"
-                artist = ""
-                status = ""
-            GLib.idle_add(self._update, title, artist, status == "Playing")
-        threading.Thread(target=_do, daemon=True).start()
-        return True
-
-    def _update(self, title, artist, playing):
-        self.title   = title
-        self.artist  = artist
-        self.playing = playing
-
-    def tick_spin(self):
-        if self.playing:
-            self.disc_angle += 0.04
-            if self.disc_angle > 2 * math.pi:
-                self.disc_angle -= 2 * math.pi
-        # Scrolling marquee
-        self.scroll_off = (self.scroll_off + 1) % 200
-
-    def cmd(self, action):
-        subprocess.Popen(["playerctl", action],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    def get_height(self):
-        return 160
-
-    def draw(self, ctx, widget, x, y, w):
-        h = self.get_height()
-        draw_glass_card(ctx, x, y, w, h)
-
-        DISC = 80
-        dx   = x + SECTION_PAD + DISC // 2
-        dy   = y + h // 2
-
-        # ── Spinning disc ─────────────────────────────────
-        ctx.save()
-        ctx.translate(dx, dy)
-        ctx.rotate(self.disc_angle)
-
-        # Outer ring gradient
-        grd = cairo.RadialGradient(0, 0, 0, 0, 0, DISC/2)
-        grd.add_color_stop_rgba(0,   0.05, 0.05, 0.1, 1)
-        grd.add_color_stop_rgba(0.35, 0.0, 0.3,  0.5, 1)
-        grd.add_color_stop_rgba(0.7,  0.0, 0.15, 0.3, 1)
-        grd.add_color_stop_rgba(1,    0.0, 0.5,  0.7, 1)
-        ctx.arc(0, 0, DISC/2, 0, 2*math.pi)
-        ctx.set_source(grd)
-        ctx.fill()
-
-        # Vinyl grooves
-        ctx.set_line_width(0.5)
-        set_color(ctx, (1, 1, 1, 0.07))
-        for r in range(int(DISC*0.15), int(DISC*0.48), 4):
-            ctx.arc(0, 0, r, 0, 2*math.pi)
-            ctx.stroke()
-
-        # Centre hole
-        ctx.arc(0, 0, DISC*0.08, 0, 2*math.pi)
-        set_color(ctx, (0.0, 0.831, 1.0, 1.0))
-        ctx.fill()
-        ctx.arc(0, 0, DISC*0.03, 0, 2*math.pi)
-        set_color(ctx, (0.05, 0.05, 0.1, 1))
-        ctx.fill()
-
-        ctx.restore()
-
-        # Glow ring
-        ctx.arc(dx, dy, DISC/2 + 2, 0, 2*math.pi)
-        set_color(ctx, GLOW_BORDER if self.playing else (1, 1, 1, 0.1))
-        ctx.set_line_width(1.5)
-        ctx.stroke()
-
-        # ── Text ──────────────────────────────────────────
-        tx = x + SECTION_PAD + DISC + 14
-        tw = w - tx + x - SECTION_PAD
-
-        # Scrolling title
-        title_full = self.title or "Nothing playing"
-        layout = pango_layout(widget, ctx, title_full, 12, bold=True)
-        pw, ph = layout.get_pixel_size()
-        ctx.save()
-        ctx.rectangle(tx, y + 28, tw, ph + 2)
-        ctx.clip()
-        scroll_px = (self.scroll_off * 1) % max(pw + 40, 1) if pw > tw else 0
-        ctx.translate(tx - scroll_px, y + 28)
-        set_color(ctx, TEXT_PRIMARY)
-        PangoCairo.show_layout(ctx, layout)
-        if pw > tw:
-            ctx.translate(pw + 40, 0)
-            PangoCairo.show_layout(ctx, layout)
-        ctx.restore()
-
-        if self.artist:
-            layout = pango_layout(widget, ctx, self.artist, 10)
-            ctx.save()
-            ctx.translate(tx, y + 50)
-            set_color(ctx, TEXT_SECONDARY)
-            PangoCairo.show_layout(ctx, layout)
-            ctx.restore()
-
-        # ── Controls ──────────────────────────────────────
-        buttons = [("⏮", "previous"), ("⏸" if self.playing else "▶", "play-pause"), ("⏭", "next")]
-        bw  = 36
-        gap = 10
-        total = len(buttons) * bw + (len(buttons)-1) * gap
-        bx_start = tx
-        by = y + h - bw - 14
-
-        for i, (icon, action) in enumerate(buttons):
-            bx = bx_start + i * (bw + gap)
-            rounded_rect(ctx, bx, by, bw, bw, 8)
-            set_color(ctx, GLASS_CARD)
-            ctx.fill_preserve()
-            set_color(ctx, GLOW_BORDER)
-            ctx.set_line_width(1)
-            ctx.stroke()
-
-            layout = pango_layout(widget, ctx, icon, 16)
-            iw, ih = layout.get_pixel_size()
-            ctx.save()
-            ctx.translate(bx + (bw - iw) / 2, by + (bw - ih) / 2)
-            set_color(ctx, ACCENT)
-            PangoCairo.show_layout(ctx, layout)
-            ctx.restore()
-
-
-# ─────────────────────────────────────────────
-# SECTION: APP LAUNCHER
-# ─────────────────────────────────────────────
-
-class AppLauncherSection:
-    APPS = [
-        ("Chrome",      "google-chrome",    "google-chrome"),
-        ("Brave",       "brave-browser",    "brave-browser"),
-        ("Discord",     "discord",          "discord"),
-        ("YouTube",     "🎬",               "xdg-open https://youtube.com"),
-        ("Calculator",  "gnome-calculator", "gnome-calculator"),
-        ("Files",       "nautilus",         "nautilus"),
-    ]
+class Widget(Gtk.Window):
 
     def __init__(self):
-        self.hover_idx     = -1
-        self.hover_scale   = {}
-        self._icon_pixbufs = {}
-        self._load_icons()
+        super().__init__()
+        self.weather  = Weather()
+        self.state    = State()
+        self._hits    = {}           # name → (x,y,w,h,callback)
+        self._profile = self._load_profile()
 
-    def _load_icons(self):
-        from gi.repository import GdkPixbuf
-        icon_theme = Gtk.IconTheme.get_default()
-        for name, icon_id, _ in self.APPS:
-            if icon_id.startswith("🎬"):
-                self._icon_pixbufs[name] = None
-                continue
-            try:
-                pb = icon_theme.load_icon(icon_id, 40, 0)
-                self._icon_pixbufs[name] = pb
-            except Exception:
-                self._icon_pixbufs[name] = None
-
-    def launch(self, idx):
-        _, _, cmd = self.APPS[idx]
-        subprocess.Popen(cmd.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    def get_height(self):
-        return 130
-
-    def draw(self, ctx, widget, x, y, w):
-        h = self.get_height()
-        draw_glass_card(ctx, x, y, w, h)
-
-        n     = len(self.APPS)
-        cols  = 6
-        rows  = math.ceil(n / cols)
-        cell_w = (w - 2*SECTION_PAD) / cols
-        cell_h = (h - 2*SECTION_PAD - 16) / rows
-
-        layout = pango_layout(widget, ctx, "APP LAUNCHER", 8)
-        ctx.save()
-        ctx.translate(x + SECTION_PAD, y + 6)
-        set_color(ctx, TEXT_SECONDARY)
-        PangoCairo.show_layout(ctx, layout)
-        ctx.restore()
-
-        for i, (name, icon_id, _) in enumerate(self.APPS):
-            col = i % cols
-            row = i // cols
-            cx  = x + SECTION_PAD + col * cell_w
-            cy  = y + 22 + row * cell_h
-            scale = self.hover_scale.get(i, 1.0)
-
-            # Hover glow background
-            if scale > 1.01:
-                rounded_rect(ctx, cx + 2, cy + 2, cell_w - 4, cell_h - 4, 8)
-                set_color(ctx, ACCENT_DIM)
-                ctx.fill()
-
-            ICON = 28
-            ix   = cx + (cell_w - ICON) / 2
-            iy   = cy + 4
-
-            pb = self._icon_pixbufs.get(name)
-            if pb:
-                ctx.save()
-                ctx.translate(ix + ICON/2, iy + ICON/2)
-                ctx.scale(scale, scale)
-                ctx.translate(-ICON/2, -ICON/2)
-                Gdk.cairo_set_source_pixbuf(ctx, pb, 0, 0)
-                ctx.paint()
-                ctx.restore()
-            else:
-                # Emoji fallback
-                layout2 = pango_layout(widget, ctx, icon_id, 20)
-                pw, ph = layout2.get_pixel_size()
-                ctx.save()
-                ctx.translate(cx + (cell_w - pw) / 2, iy)
-                ctx.scale(scale, scale)
-                set_color(ctx, ACCENT)
-                PangoCairo.show_layout(ctx, layout2)
-                ctx.restore()
-
-            # Label
-            layout2 = pango_layout(widget, ctx, name, 7)
-            pw, _ = layout2.get_pixel_size()
-            ctx.save()
-            ctx.translate(cx + (cell_w - pw) / 2, iy + ICON + 2)
-            set_color(ctx, TEXT_SECONDARY)
-            PangoCairo.show_layout(ctx, layout2)
-            ctx.restore()
-
-    def icon_rect(self, idx, widget_x, widget_y, w):
-        cols  = 6
-        cell_w = (w - 2*SECTION_PAD) / cols
-        cell_h = (130 - 2*SECTION_PAD - 16) / math.ceil(len(self.APPS) / cols)
-        col = idx % cols
-        row = idx // cols
-        return (widget_x + SECTION_PAD + col * cell_w,
-                widget_y + 22 + row * cell_h,
-                cell_w, cell_h)
-
-
-# ─────────────────────────────────────────────
-# SECTION: QUICK TOGGLES
-# ─────────────────────────────────────────────
-
-class QuickTogglesSection:
-    TOGGLES = ["WiFi", "BT", "Night", "Power"]
-
-    def __init__(self):
-        self.states = {"WiFi": False, "BT": False, "Night": False, "Power": False}
-        self._detect_states()
-
-    def _detect_states(self):
-        def _do():
-            wifi_on = False
-            bt_on   = False
-            try:
-                out = subprocess.check_output(
-                    ["nmcli", "radio", "wifi"], text=True, stderr=subprocess.DEVNULL
-                ).strip()
-                wifi_on = out.lower() == "enabled"
-            except Exception:
-                pass
-            try:
-                out = subprocess.check_output(
-                    ["bluetoothctl", "show"], text=True, stderr=subprocess.DEVNULL
-                )
-                bt_on = "Powered: yes" in out
-            except Exception:
-                pass
-            GLib.idle_add(self._apply_states, wifi_on, bt_on)
-        threading.Thread(target=_do, daemon=True).start()
-
-    def _apply_states(self, wifi, bt):
-        self.states["WiFi"] = wifi
-        self.states["BT"]   = bt
-
-    def toggle(self, name):
-        if name == "WiFi":
-            new = not self.states["WiFi"]
-            cmd = ["nmcli", "radio", "wifi", "on" if new else "off"]
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.states["WiFi"] = new
-        elif name == "BT":
-            new = not self.states["BT"]
-            cmd = ["bluetoothctl", "power", "on" if new else "off"]
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.states["BT"] = new
-        elif name == "Night":
-            new = not self.states["Night"]
-            if new:
-                subprocess.Popen(["redshift", "-O", "3500"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                subprocess.Popen(["redshift", "-x"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.states["Night"] = new
-        elif name == "Power":
-            self._show_power_menu()
-
-    def _show_power_menu(self):
-        dialog = Gtk.Dialog(title="Power", flags=0)
-        dialog.set_decorated(True)
-        dialog.add_buttons(
-            "Shutdown", 1,
-            "Restart",  2,
-            "Logout",   3,
-            "Cancel",   0,
-        )
-        dialog.get_content_area().add(
-            Gtk.Label(label="Choose a power action:")
-        )
-        dialog.show_all()
-        resp = dialog.run()
-        dialog.destroy()
-        if resp == 1:
-            subprocess.Popen(["systemctl", "poweroff"])
-        elif resp == 2:
-            subprocess.Popen(["systemctl", "reboot"])
-        elif resp == 3:
-            subprocess.Popen(["gnome-session-quit", "--logout", "--no-prompt"])
-
-    ICONS = {"WiFi": "📶", "BT": "🔵", "Night": "🌙", "Power": "⏻"}
-
-    def get_height(self):
-        return 74
-
-    def draw(self, ctx, widget, x, y, w):
-        h = self.get_height()
-        draw_glass_card(ctx, x, y, w, h)
-
-        layout = pango_layout(widget, ctx, "QUICK TOGGLES", 8)
-        ctx.save()
-        ctx.translate(x + SECTION_PAD, y + 6)
-        set_color(ctx, TEXT_SECONDARY)
-        PangoCairo.show_layout(ctx, layout)
-        ctx.restore()
-
-        n    = len(self.TOGGLES)
-        pw   = (w - 2*SECTION_PAD - (n-1)*8) / n
-        ph   = 36
-        py_  = y + 24
-
-        for i, name in enumerate(self.TOGGLES):
-            bx = x + SECTION_PAD + i * (pw + 8)
-            on = self.states.get(name, False)
-
-            # Pill background
-            rounded_rect(ctx, bx, py_, pw, ph, ph/2)
-            if on:
-                set_color(ctx, (0.0, 0.4, 0.55, 0.5))
-            else:
-                set_color(ctx, (1, 1, 1, 0.06))
-            ctx.fill_preserve()
-            set_color(ctx, ACCENT if on else (1, 1, 1, 0.15))
-            ctx.set_line_width(1.2)
-            ctx.stroke()
-
-            icon  = self.ICONS[name]
-            label = f"{icon} {name}"
-            layout2 = pango_layout(widget, ctx, label, 9, bold=on)
-            lw, lh = layout2.get_pixel_size()
-            ctx.save()
-            ctx.translate(bx + (pw - lw) / 2, py_ + (ph - lh) / 2)
-            set_color(ctx, ACCENT if on else TEXT_SECONDARY)
-            PangoCairo.show_layout(ctx, layout2)
-            ctx.restore()
-
-    def button_rects(self, x, y, w):
-        n    = len(self.TOGGLES)
-        pw   = (w - 2*SECTION_PAD - (n-1)*8) / n
-        ph   = 36
-        py_  = y + 24
-        rects = []
-        for i in range(n):
-            bx = x + SECTION_PAD + i * (pw + 8)
-            rects.append((bx, py_, pw, ph))
-        return rects
-
-
-# ─────────────────────────────────────────────
-# MAIN WIDGET WINDOW
-# ─────────────────────────────────────────────
-
-class DesktopWidget(Gtk.Window):
-    def __init__(self):
-        super().__init__(type=Gtk.WindowType.TOPLEVEL)
-
-        # ── Window properties ─────────────────────────────
-        self.set_title("desktop-widget")
+        # window flags
+        self.set_app_paintable(True)
         self.set_decorated(False)
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
         self.set_keep_below(True)
-        self.set_type_hint(Gdk.WindowTypeHint.DESKTOP)
         self.set_accept_focus(False)
-        self.stick()  # show on all workspaces
+        self.set_type_hint(Gdk.WindowTypeHint.DESKTOP)
+        self.set_default_size(WIDGET_W, WIDGET_H)
 
-        # ── RGBA / transparency ───────────────────────────
-        screen  = self.get_screen()
-        visual  = screen.get_rgba_visual()
+        screen = self.get_screen()
+        visual = screen.get_rgba_visual()
         if visual:
             self.set_visual(visual)
-        self.set_app_paintable(True)
 
-        # ── Size & position ───────────────────────────────
-        self.set_default_size(WIDGET_WIDTH, 10)
-        screen_w = screen.get_width()
-        screen_h = screen.get_height()
-        self.move((screen_w - WIDGET_WIDTH) // 2, (screen_h - 720) // 2)
+        sw, sh = screen.get_width(), screen.get_height()
+        self.move((sw - WIDGET_W) // 2, (sh - WIDGET_H) // 2)
 
-        # ── Sections ──────────────────────────────────────
-        self.aurora   = AuroraBackground()
-        self.clock_s  = ClockSection()
-        self.profile  = ProfileSection()
-        self.music    = MusicSection(self)
-        self.apps     = AppLauncherSection()
-        self.toggles  = QuickTogglesSection()
-
-        # Sections list with y offsets (computed on draw)
-        self._section_layout = []
-
-        # ── Drawing area ──────────────────────────────────
-        self.da = Gtk.DrawingArea()
-        self.da.connect("draw", self._on_draw)
-        self.da.add_events(
-            Gdk.EventMask.BUTTON_PRESS_MASK
-            | Gdk.EventMask.POINTER_MOTION_MASK
-        )
-        self.da.connect("button-press-event", self._on_click)
-        self.da.connect("motion-notify-event", self._on_motion)
-
-        # Scrolled window for small screens
-        sw = Gtk.ScrolledWindow()
-        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        sw.add(self.da)
-        self.add(sw)
-
-        # ── Timers ────────────────────────────────────────
-        GLib.timeout_add(1000, self._tick_clock)
-        GLib.timeout_add(50,   self._tick_spin)
-        GLib.timeout_add(30_000, self._tick_aurora)   # aurora tick every 30 seconds
-
+        self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        self.connect("button-press-event", self._on_click)
+        self.connect("draw",               self._draw)
         self.show_all()
 
-    # ── Timer callbacks ───────────────────────────────────
+        GLib.timeout_add(1000, self._tick)
+        GLib.timeout_add(50,   self._tick_cd)
 
-    def _tick_clock(self):
-        self.da.queue_draw()
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _load_profile(self):
+        if os.path.exists(PROFILE_IMG):
+            try:
+                return GdkPixbuf.Pixbuf.new_from_file_at_scale(PROFILE_IMG, 70, 70, True)
+            except Exception:
+                pass
+        return None
+
+    def _tick(self):
+        self.queue_draw()
         return True
 
-    def _tick_spin(self):
-        self.music.tick_spin()
-        self.da.queue_draw()
+    def _tick_cd(self):
+        if self.state.cd_playing:
+            self.state.cd_angle = (self.state.cd_angle + 1.8) % 360
+        self.queue_draw()
         return True
 
-    def _tick_aurora(self):
-        self.aurora.tick()
-        return True
+    def _on_click(self, _w, event):
+        x, y = event.x, event.y
+        for rx, ry, rw, rh, cb in self._hits.values():
+            if rx <= x <= rx+rw and ry <= y <= ry+rh:
+                cb()
+                self.queue_draw()
+                return
 
-    # ── Draw ──────────────────────────────────────────────
+    def _reg(self, name, x, y, w, h, cb):
+        self._hits[name] = (x, y, w, h, cb)
 
-    def _on_draw(self, widget, ctx):
-        alloc = widget.get_allocation()
-        W, H  = alloc.width, alloc.height
+    # ── text renderer ────────────────────────────────────────────────────────
 
-        # Transparent base
-        ctx.set_operator(cairo.OPERATOR_SOURCE)
-        ctx.set_source_rgba(0, 0, 0, 0)
-        ctx.paint()
-        ctx.set_operator(cairo.OPERATOR_OVER)
+    def _txt(self, cr, text, x, y, size=11, bold=False,
+             color=None, center=False):
+        if color is None: color = C_WHITE
+        layout = self.create_pango_layout(text)
+        fd = Pango.FontDescription.from_string(
+            f"{'Ubuntu Bold' if bold else 'Ubuntu'} {size}")
+        layout.set_font_description(fd)
+        lw, lh = layout.get_pixel_size()
+        ox = x - lw//2 if center else x
+        cr.save()
+        cr.move_to(ox, y - lh//2)
+        cr.set_source_rgba(*color)
+        PangoCairo.show_layout(cr, layout)
+        cr.restore()
 
-        # Aurora background
-        self.aurora.draw(ctx, W, H)
+    def _txt_grad(self, cr, text, x, y, size=36, bold=True, center=False):
+        layout = self.create_pango_layout(text)
+        fd = Pango.FontDescription.from_string(
+            f"{'Ubuntu Bold' if bold else 'Ubuntu'} {size}")
+        layout.set_font_description(fd)
+        lw, lh = layout.get_pixel_size()
+        ox = x - lw//2 if center else x
+        cr.save()
+        g = cairo.LinearGradient(ox, y - lh//2, ox + lw, y + lh//2)
+        g.add_color_stop_rgba(0, 1, 1, 1, 1)
+        g.add_color_stop_rgba(1, *C_PURPLE[:3], 1)
+        cr.set_source(g)
+        cr.move_to(ox, y - lh//2)
+        PangoCairo.show_layout(cr, layout)
+        cr.restore()
 
-        # Sections
-        sections = [
-            ("clock",   self.clock_s),
-            ("profile", self.profile),
-            ("music",   self.music),
-            ("apps",    self.apps),
-            ("toggles", self.toggles),
-        ]
-        GAP = 12
-        pad = SECTION_PAD
-        x   = pad
-        y   = pad
-        w   = W - 2 * pad
+    # ── main draw ─────────────────────────────────────────────────────────────
 
-        self._section_layout = []
-        for key, sec in sections:
-            h = sec.get_height()
-            sec.draw(ctx, widget, x, y, w)
-            self._section_layout.append((key, sec, x, y, w, h))
-            y += h + GAP
+    def _draw(self, _w, cr):
+        cr.set_operator(cairo.OPERATOR_SOURCE)
+        cr.set_source_rgba(0, 0, 0, 0)
+        cr.paint()
+        cr.set_operator(cairo.OPERATOR_OVER)
+        self._hits.clear()
 
-        # Resize drawing area to fit content
-        total_h = y + pad
-        if self.da.get_allocated_height() < total_h - 10:
-            self.da.set_size_request(W, total_h)
+        # outer panel
+        rounded_rect(cr, 0, 0, WIDGET_W, WIDGET_H, 26)
+        set_rgba(cr, C_BG)
+        cr.fill()
+        rounded_rect(cr, 0, 0, WIDGET_W, WIDGET_H, 26)
+        set_rgba(cr, C_BORDER)
+        cr.set_line_width(1.5)
+        cr.stroke()
 
-    # ── Input handling ────────────────────────────────────
+        P = 14   # outer pad
+        G = 10   # gap
+        CW = (WIDGET_W - 2*P - 2*G) // 3  # ~202px
 
-    def _on_click(self, widget, event):
-        ex, ey = event.x, event.y
-        for key, sec, sx, sy, sw, sh in self._section_layout:
-            if key == "music":
-                # Check control buttons
-                buttons = [("previous",), ("play-pause",), ("next",)]
-                DISC = 80
-                tx = sx + SECTION_PAD + DISC + 14
-                bw = 36; gap = 10
-                by = sy + sh - bw - 14
-                for i, (action,) in enumerate(buttons):
-                    bx = tx + i * (bw + gap)
-                    if bx <= ex <= bx + bw and by <= ey <= by + bw:
-                        self.music.cmd(action)
-                        return
+        R1 = 175   # row 1 height
+        R2 = 160   # row 2 height
+        R3 = 106   # row 3 (toggles)
 
-            elif key == "apps":
-                for i in range(len(self.apps.APPS)):
-                    rx, ry, rw, rh = self.apps.icon_rect(i, sx, sy, sw)
-                    if rx <= ex <= rx + rw and ry <= ey <= ry + rh:
-                        self.apps.launch(i)
-                        return
+        x1, x2, x3 = P, P+CW+G, P+2*(CW+G)
+        y1 = P
+        y2 = P + R1 + G
+        y3 = P + R1 + R2 + 2*G
 
-            elif key == "toggles":
-                rects = self.toggles.button_rects(sx, sy, sw)
-                for i, (bx, by, bw, bh) in enumerate(rects):
-                    if bx <= ex <= bx + bw and by <= ey <= by + bh:
-                        self.toggles.toggle(self.toggles.TOGGLES[i])
-                        self.da.queue_draw()
-                        return
+        self._profile_card(cr,  x1, y1, CW,       R1)
+        self._clock_card(cr,    x2, y1, CW,       R1)
+        self._calendar_card(cr, x3, y1, CW,       R1)
+        self._music_card(cr,    x1, y2, CW*2+G,   R2)
+        self._apps_card(cr,     x3, y2, CW,       R2)
+        self._toggles_card(cr,  x1, y3, WIDGET_W-2*P, R3)
 
-    def _on_motion(self, widget, event):
-        ex, ey = event.x, event.y
-        changed = False
-        for key, sec, sx, sy, sw, sh in self._section_layout:
-            if key != "apps":
-                continue
-            for i in range(len(self.apps.APPS)):
-                rx, ry, rw, rh = self.apps.icon_rect(i, sx, sy, sw)
-                inside = rx <= ex <= rx + rw and ry <= ey <= ry + rh
-                target = 1.15 if inside else 1.0
-                prev   = self.apps.hover_scale.get(i, 1.0)
-                # Smooth approach
-                new    = prev + (target - prev) * 0.25
-                if abs(new - prev) > 0.002:
-                    self.apps.hover_scale[i] = new
-                    changed = True
+    # ── PROFILE ──────────────────────────────────────────────────────────────
+
+    def _profile_card(self, cr, x, y, w, h):
+        glass_card(cr, x, y, w, h)
+        cx = x + w//2
+
+        # avatar
+        R = 32
+        ax, ay = cx, y + 20 + R
+        if self._profile:
+            cr.save()
+            cr.arc(ax, ay, R, 0, 2*math.pi)
+            cr.clip()
+            Gdk.cairo_set_source_pixbuf(cr, self._profile, ax-R, ay-R)
+            cr.paint()
+            cr.restore()
+        else:
+            cr.arc(ax, ay, R, 0, 2*math.pi)
+            g = cairo.RadialGradient(ax-R*0.3, ay-R*0.3, 2, ax, ay, R)
+            g.add_color_stop_rgba(0, *C_PURPLE[:3], 1)
+            g.add_color_stop_rgba(1, *C_BLUE[:3], 1)
+            cr.set_source(g)
+            cr.fill()
+            self._txt(cr, "👤", ax, ay+8, 28, center=True)
+
+        # ring
+        cr.arc(ax, ay, R+2, 0, 2*math.pi)
+        set_rgba(cr, C_BORDER)
+        cr.set_line_width(1.5)
+        cr.stroke()
+
+        self._txt(cr, USER_NAME, cx, ay+R+22, 13, bold=True, center=True)
+        wstr = f"{self.weather.icon}  {self.weather.temp}  {self.weather.desc}"
+        self._txt(cr, wstr, cx, ay+R+42, 9, color=C_DIM, center=True)
+
+    # ── CLOCK ─────────────────────────────────────────────────────────────────
+
+    def _clock_card(self, cr, x, y, w, h):
+        glass_card(cr, x, y, w, h)
+        now = datetime.datetime.now()
+        cx  = x + w//2
+
+        self._txt_grad(cr, now.strftime("%H:%M"), cx, y+68, size=40, center=True)
+        self._txt(cr, now.strftime(":%S"), cx, y+96, 12, color=C_PURPLE, center=True)
+        self._txt(cr, now.strftime("%A, %B %d"), cx, y+118, 9.5, color=C_DIM, center=True)
+
+        # seconds arc
+        R  = 26
+        acx, acy = cx, y + h - 32
+        cr.arc(acx, acy, R, 0, 2*math.pi)
+        set_rgba(cr, C_FAINT)
+        cr.set_line_width(2.5)
+        cr.stroke()
+        if now.second > 0:
+            a0 = -math.pi/2
+            a1 = a0 + (now.second/60)*2*math.pi
+            cr.arc(acx, acy, R, a0, a1)
+            g = cairo.LinearGradient(acx-R, acy, acx+R, acy)
+            g.add_color_stop_rgba(0, *C_BLUE[:3], 1)
+            g.add_color_stop_rgba(1, *C_PURPLE[:3], 1)
+            cr.set_source(g)
+            cr.stroke()
+        da = -math.pi/2 + (now.second/60)*2*math.pi
+        cr.arc(acx+R*math.cos(da), acy+R*math.sin(da), 4, 0, 2*math.pi)
+        set_rgba(cr, C_PURPLE)
+        cr.fill()
+
+    # ── CALENDAR ──────────────────────────────────────────────────────────────
+
+    def _calendar_card(self, cr, x, y, w, h):
+        glass_card(cr, x, y, w, h)
+        today = datetime.date.today()
+        first = today.replace(day=1)
+        start = (first.weekday() + 1) % 7   # Sun=0
+
+        self._txt(cr, today.strftime("%B %Y"), x+w//2, y+20, 10,
+                  bold=True, color=C_PURPLE, center=True)
+
+        cell_w = (w-16)/7
+        hdr_y  = y + 36
+        for i, d in enumerate(["S","M","T","W","T","F","S"]):
+            self._txt(cr, d, x+8+i*cell_w+cell_w/2, hdr_y, 8,
+                      color=C_FAINT, center=True)
+
+        days_in = cal_mod.monthrange(today.year, today.month)[1]
+        col, row = start, 0
+        base_y = hdr_y + 16
+        row_h  = (h - (base_y - y) - 8) / 5
+
+        for d in range(1, days_in+1):
+            ccx = x + 8 + col*cell_w + cell_w/2
+            ccy = base_y + row*row_h + row_h/2
+            if d == today.day:
+                cr.arc(ccx, ccy, 10, 0, 2*math.pi)
+                g = cairo.RadialGradient(ccx, ccy, 1, ccx, ccy, 10)
+                g.add_color_stop_rgba(0, *C_PURPLE[:3], 0.95)
+                g.add_color_stop_rgba(1, *C_BLUE[:3], 0.6)
+                cr.set_source(g)
+                cr.fill()
+                self._txt(cr, str(d), ccx, ccy+4, 9, bold=True, center=True)
+            else:
+                self._txt(cr, str(d), ccx, ccy+4, 8.5, color=C_DIM, center=True)
+            col += 1
+            if col == 7:
+                col = 0
+                row += 1
+
+    # ── MUSIC ─────────────────────────────────────────────────────────────────
+
+    def _music_card(self, cr, x, y, w, h):
+        glass_card(cr, x, y, w, h)
+        s = self.state
+
+        # CD disc
+        R   = 48
+        dcx = x + 22 + R
+        dcy = y + h//2
+
+        cr.save()
+        cr.translate(dcx, dcy)
+        cr.rotate(math.radians(s.cd_angle))
+
+        # rainbow segments
+        segs = 16
+        for i in range(segs):
+            a1 = (i/segs)*2*math.pi
+            a2 = ((i+1)/segs)*2*math.pi
+            cr.move_to(0, 0)
+            cr.arc(0, 0, R, a1, a2)
+            cr.close_path()
+            hue = i/segs
+            rc = 0.45 + 0.35*math.sin(hue*2*math.pi)
+            gc = 0.30 + 0.25*math.cos(hue*2*math.pi+1)
+            bc = 0.75 + 0.20*math.sin(hue*2*math.pi+2)
+            cr.set_source_rgba(rc, gc, bc, 0.9)
+            cr.fill()
+
+        # label ring
+        cr.arc(0, 0, R*0.58, 0, 2*math.pi)
+        cr.set_source_rgba(0.07, 0.06, 0.20, 1)
+        cr.fill()
+
+        # hole
+        cr.arc(0, 0, R*0.11, 0, 2*math.pi)
+        cr.set_source_rgba(0.20, 0.18, 0.40, 1)
+        cr.fill()
+
+        # shine
+        sg = cairo.RadialGradient(-R*0.35, -R*0.35, 1, 0, 0, R)
+        sg.add_color_stop_rgba(0, 1, 1, 1, 0.40)
+        sg.add_color_stop_rgba(1, 1, 1, 1, 0.00)
+        cr.set_source(sg)
+        cr.arc(0, 0, R, 0, 2*math.pi)
+        cr.fill()
+        cr.restore()
+
+        # ring border
+        cr.arc(dcx, dcy, R+2, 0, 2*math.pi)
+        set_rgba(cr, C_BORDER)
+        cr.set_line_width(1.5)
+        cr.stroke()
+
+        # text section
+        tx = dcx + R + 18
+        tw = w - (tx - x) - 14
+
+        self._txt(cr, "NOW PLAYING", tx, y+24, 7.5, color=C_FAINT)
+        self._txt(cr, "YouTube", tx, y+46, 15, bold=True)
+        self._txt(cr, "Open in Browser · Music", tx, y+66, 9, color=C_DIM)
+
+        # progress bar
+        bary = y + 84
+        cr.rectangle(tx, bary, tw, 3)
+        set_rgba(cr, C_FAINT)
+        cr.fill()
+        cr.rectangle(tx, bary, tw*0.38, 3)
+        g = cairo.LinearGradient(tx, bary, tx+tw, bary)
+        g.add_color_stop_rgba(0, *C_BLUE[:3], 1)
+        g.add_color_stop_rgba(1, *C_PURPLE[:3], 1)
+        cr.set_source(g)
+        cr.fill()
+
+        # control buttons
+        btns = [("⏮","prev"), ("⏯" if not s.cd_playing else "⏸","play"), ("⏭","next"), ("🔗","open")]
+        bw, bh = 36, 30
+        gap_b  = 8
+        by_b   = bary + 14
+
+        for i, (icon, name) in enumerate(btns):
+            bxb = tx + i*(bw+gap_b)
+            rounded_rect(cr, bxb, by_b, bw, bh, 8)
+            if name == "play":
+                g = cairo.LinearGradient(bxb, by_b, bxb+bw, by_b+bh)
+                g.add_color_stop_rgba(0, *C_PURPLE[:3], 0.9)
+                g.add_color_stop_rgba(1, *C_BLUE[:3], 0.9)
+                cr.set_source(g)
+            else:
+                set_rgba(cr, C_CARD)
+            cr.fill()
+            rounded_rect(cr, bxb, by_b, bw, bh, 8)
+            set_rgba(cr, C_BORDER)
+            cr.set_line_width(1)
+            cr.stroke()
+            self._txt(cr, icon, bxb+bw//2, by_b+bh//2+5, 14, center=True)
+
+            def make_cb(n):
+                if n == "play":
+                    return lambda: setattr(self.state, "cd_playing", not self.state.cd_playing)
+                elif n == "open":
+                    return lambda: launch("xdg-open https://youtube.com/music")
                 else:
-                    self.apps.hover_scale[i] = target
-        if changed:
-            self.da.queue_draw()
+                    return lambda: launch("xdg-open https://youtube.com")
+            self._reg(f"music_{name}", bxb, by_b, bw, bh, make_cb(name))
+
+    # ── APPS ──────────────────────────────────────────────────────────────────
+
+    def _apps_card(self, cr, x, y, w, h):
+        glass_card(cr, x, y, w, h)
+        self._txt(cr, "LAUNCH", x+w//2, y+20, 8, color=C_FAINT, center=True)
+
+        cols   = 3
+        rows   = math.ceil(len(APPS)/cols)
+        isz    = 38
+        cw     = (w-12)/cols
+        row_h  = (h-32)/rows
+
+        for i, app in enumerate(APPS):
+            col = i % cols
+            row = i // cols
+            icx = x + 6 + col*cw + cw/2
+            icy = y + 30 + row*row_h + row_h/2 - 10
+
+            rounded_rect(cr, icx-isz/2, icy-isz/2, isz, isz, 10)
+            set_rgba(cr, C_CARD)
+            cr.fill()
+            rounded_rect(cr, icx-isz/2, icy-isz/2, isz, isz, 10)
+            set_rgba(cr, C_BORDER)
+            cr.set_line_width(1)
+            cr.stroke()
+
+            self._txt(cr, app["icon"], icx, icy+8, 18, center=True)
+            self._txt(cr, app["name"], icx, icy+isz/2+14, 8, color=C_DIM, center=True)
+
+            cmd = app["cmd"]
+            self._reg(f"app_{i}", icx-isz/2, icy-isz/2, isz, isz+18,
+                      lambda c=cmd: launch(c))
+
+    # ── TOGGLES ───────────────────────────────────────────────────────────────
+
+    def _toggles_card(self, cr, x, y, w, h):
+        glass_card(cr, x, y, w, h)
+        s = self.state
+
+        items = [
+            ("📶", "Wi-Fi",     "wifi",   s.wifi,   self._t_wifi),
+            ("🦷", "Bluetooth", "bt",     s.bt,     self._t_bt),
+            ("🌙", "Night",     "night",  s.night,  self._t_night),
+            ("🔆", "Bright",    "bright", s.bright, self._t_bright),
+            ("⚡", "Power",     "power",  False,    self._t_power),
+        ]
+
+        bw, bh = 52, 52
+        n = len(items)
+        spacing = (w-16)/n
+        by = y + (h-bh)//2 - 8
+
+        for i, (icon, label, key, active, cb) in enumerate(items):
+            bx = x + 8 + i*spacing + (spacing-bw)/2
+            rounded_rect(cr, bx, by, bw, bh, 14)
+            if active:
+                g = cairo.LinearGradient(bx, by, bx+bw, by+bh)
+                g.add_color_stop_rgba(0, *C_PURPLE[:3], 0.32)
+                g.add_color_stop_rgba(1, *C_BLUE[:3], 0.22)
+                cr.set_source(g)
+            else:
+                set_rgba(cr, C_CARD)
+            cr.fill()
+            rounded_rect(cr, bx, by, bw, bh, 14)
+            set_rgba(cr, C_PURPLE if active else C_BORDER)
+            cr.set_line_width(1.5)
+            cr.stroke()
+
+            self._txt(cr, icon, bx+bw/2, by+bh/2+7, 22, center=True)
+            self._txt(cr, label, bx+bw/2, by+bh+18, 8.5,
+                      color=C_PURPLE if active else C_DIM, center=True)
+            self._reg(f"tog_{key}", bx, by, bw, bh+22, cb)
+
+    def _t_wifi(self):
+        s = self.state
+        run_cmd("nmcli radio wifi " + ("off" if s.wifi else "on"))
+        s.wifi = not s.wifi
+
+    def _t_bt(self):
+        s = self.state
+        run_cmd("bluetoothctl power " + ("off" if s.bt else "on"))
+        s.bt = not s.bt
+
+    def _t_night(self):
+        s = self.state
+        s.night = not s.night
+        run_cmd("redshift -O 3500" if s.night else "redshift -x")
+
+    def _t_bright(self):
+        s = self.state
+        s.bright = not s.bright
+        run_cmd("brightnessctl set " + ("100%" if s.bright else "40%"))
+
+    def _t_power(self):
+        d = Gtk.MessageDialog(parent=None, flags=0,
+                              message_type=Gtk.MessageType.QUESTION,
+                              buttons=Gtk.ButtonsType.NONE,
+                              text="Power Options")
+        d.add_button("Suspend",  1)
+        d.add_button("Restart",  2)
+        d.add_button("Shutdown", 3)
+        d.add_button("Cancel",   0)
+        r = d.run(); d.destroy()
+        if r == 1: run_cmd("systemctl suspend")
+        elif r == 2: run_cmd("systemctl reboot")
+        elif r == 3: run_cmd("systemctl poweroff")
 
 
-# ─────────────────────────────────────────────
-# ENTRY POINT
-# ─────────────────────────────────────────────
-
-def main():
-    widget = DesktopWidget()
-    widget.connect("destroy", Gtk.main_quit)
-    Gtk.main()
-
+# ─── RUN ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    main()
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    w = Widget()
+    w.connect("destroy", Gtk.main_quit)
+    Gtk.main()

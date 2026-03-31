@@ -1,110 +1,102 @@
-# my-widget
+# 🖥️ Desktop Widget — Glassmorphism Panel
 
-A Python3 + GTK3 glassmorphism desktop widget for Ubuntu Linux.
+A fully custom always-on-desktop widget for Ubuntu built with Python3 + GTK3.
 
-## Features
-
-| Section | Details |
-|---|---|
-| 🕐 Clock / Calendar | Live HH:MM:SS clock, full date, mini monthly calendar |
-| 👤 Profile / Weather | Avatar, username, live weather from wttr.in, uptime badge |
-| 🎵 Music Control | playerctl / MPRIS integration, spinning vinyl disc, controls |
-| 🚀 App Launcher | Icon grid (Chrome, Brave, Discord, YouTube, Calculator, Files) |
-| 🔘 Quick Toggles | WiFi · Bluetooth · Night Mode · Power (shutdown/restart/logout) |
-
-Visual style: **glassmorphism** — frosted dark panels, cyan (#00d4ff) accent, animated aurora background, no titlebar, pinned to desktop.
-
----
-
-## Requirements
-
-- Ubuntu 20.04+ (or any GNOME / X11 desktop)
-- Python 3.8+
-
----
-
-## Installation
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/JaiminPatel345/my-widget.git
-cd my-widget
-
-# 2. Install dependencies
-chmod +x install.sh
-./install.sh
+## 📦 Contents
+```
+widget.py      ← Main widget (run this)
+setup.sh       ← Install all dependencies
+autostart.sh   ← Make it launch at login
+README.md      ← This file
 ```
 
-**Recommended fonts** (for best appearance):
+## 🚀 Quick Start
 
+### 1. Install dependencies
 ```bash
-# JetBrains Mono (clock digits)
-sudo apt install fonts-jetbrains-mono
-
-# Outfit (headings) — download from https://fonts.google.com/specimen/Outfit
-# then copy the .ttf files to ~/.fonts/ and run: fc-cache -fv
+bash setup.sh
 ```
 
----
-
-## Configuration
-
-Edit the top of `widget.py`:
-
+### 2. Personalise
+Open `widget.py` and edit the top CONFIG section:
 ```python
-USERNAME           = "YourName"          # display name (default: $USER)
-PROFILE_IMAGE_PATH = "~/Pictures/profile.jpg"  # avatar image
-CITY               = "London"            # city for weather (default: auto-detect)
+USER_NAME   = "Your Name"    # ← your name
+CITY        = "New York"     # ← your city for weather
+PROFILE_IMG = "~/.config/desktop-widget/profile.jpg"  # ← your photo
 ```
 
----
+Copy your profile photo:
+```bash
+cp /path/to/your/photo.jpg ~/.config/desktop-widget/profile.jpg
+```
 
-## Running
-
+### 3. Run
 ```bash
 python3 widget.py
 ```
 
----
-
-## Autostart on login
-
+### 4. Auto-start on login (optional)
 ```bash
-# Copy the autostart entry — edit the Exec path to match your install location
-cp autostart.desktop ~/.config/autostart/desktop-widget.desktop
+bash autostart.sh
 ```
 
-Then edit `~/.config/autostart/desktop-widget.desktop` and update the `Exec=` line to the full path of `widget.py` on your system.
+---
+
+## 🎛️ Widget Sections
+
+| Section       | Details |
+|---------------|---------|
+| 👤 Profile    | Your photo, name, live weather |
+| 🕐 Clock      | Live HH:MM:SS + seconds arc |
+| 📅 Calendar   | Current month, today highlighted |
+| 🎵 Music      | Spinning CD disc, YouTube Music link, play/pause toggle |
+| 🚀 App Launcher | Chrome, Discord, Brave, YouTube, Calculator — one click |
+| 🔘 Toggles   | Wi-Fi, Bluetooth, Night Mode (redshift), Brightness, Power |
 
 ---
 
-## Files
+## 🎨 Customisation
 
-| File | Purpose |
-|---|---|
-| `widget.py` | Main widget (single Python file) |
-| `install.sh` | Dependency installer |
-| `autostart.desktop` | GNOME autostart entry |
-| `README.md` | This file |
+### Add/change apps
+Edit the `APPS` list in `widget.py`:
+```python
+APPS = [
+    {"name": "Chrome",  "icon": "🌐", "cmd": "google-chrome"},
+    {"name": "Discord", "icon": "💬", "cmd": "discord"},
+    # add more here...
+]
+```
+
+### Change position
+By default the widget is **centered** on screen. To move it, edit `widget.py`:
+```python
+self.move(100, 100)   # x=100px from left, y=100px from top
+```
+
+### Change size
+```python
+WIDGET_W = 650   # width
+WIDGET_H = 630   # height
+```
 
 ---
 
-## Dependencies
+## 🔧 Troubleshooting
 
-| Package | Purpose |
-|---|---|
-| `python3-gi`, `python3-gi-cairo`, `gir1.2-gtk-3.0` | GTK3 Python bindings |
-| `playerctl` | Music / MPRIS control |
-| `redshift` | Night mode (color temperature) |
-| `network-manager` (`nmcli`) | WiFi toggle |
-| `bluez` (`bluetoothctl`) | Bluetooth toggle |
-| `requests` (pip) | Weather API calls |
+**Widget not transparent?**
+Make sure your compositor is running (Compiz, Picom, or GNOME's built-in compositor).
 
----
+**Weather not loading?**
+Check your internet connection. Weather uses `wttr.in` (free, no API key needed).
 
-## Troubleshooting
+**Brightness control not working?**
+```bash
+sudo usermod -aG video $USER
+# then log out and back in
+```
 
-- **Transparent background not working** — ensure your compositor supports RGBA visuals (Compiz / Mutter / Picom).
-- **Weather shows "unavailable"** — check internet access and that `requests` is installed (`pip3 install requests`).
-- **Music section shows "Nothing playing"** — install `playerctl` and start a media player that exposes MPRIS (most desktop media players do, browser audio may need a browser extension).
-- **Icons missing** — install the relevant app (Chrome/Brave/Discord) so its `.desktop` entry and icon are registered in the system icon theme.
+**Bluetooth toggle not working?**
+```bash
+sudo systemctl enable bluetooth
+sudo systemctl start bluetooth
+```

@@ -1,10 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Desktop Widget
-Comment=GTK3 glassmorphism desktop widget
-Exec=python3 /path/to/my-widget/widget.py
-Icon=utilities-system-monitor
-Terminal=false
-Hidden=false
-NoDisplay=false
+Comment=Glassmorphism desktop widget - clock, music, apps, toggles
+Exec=python3 /home/YOUR_USERNAME/desktop_widget/widget.py
+StartupNotify=false
 X-GNOME-Autostart-enabled=true
