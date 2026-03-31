@@ -1,0 +1,145 @@
+{
+  "display_name": "Jaimin Detroja",
+  "subtitle": "That Developer",
+  "profile_image": "~/Pictures/profile.jpg",
+  "city": "Vadodara",
+
+  "quotes": [
+    {"text": "Wisdom begins in wonder.", "author": "Socrates"},
+    {"text": "Stay hungry, stay foolish.", "author": "Steve Jobs"},
+    {"text": "Code is poetry.", "author": "WordPress"},
+    {"text": "First, solve the problem.", "author": "John Johnson"},
+    {"text": "Make it work, then beautiful.", "author": "Joe Armstrong"},
+    {"text": "Simplicity is the soul of efficiency.", "author": "Austin Freeman"},
+    {"text": "Programs must be written for people.", "author": "Harold Abelson"}
+  ],
+
+  "apps": [
+    {
+      "name": "Chrome",
+      "icon": "google-chrome",
+      "icon_path": null,
+      "cmd": "google-chrome",
+      "color": [0.40, 0.85, 0.85, 1.0]
+    },
+    {
+      "name": "Brave",
+      "icon": "brave-browser",
+      "icon_path": null,
+      "cmd": "brave-browser",
+      "color": [1.00, 0.65, 0.30, 1.0]
+    },
+    {
+      "name": "Discord",
+      "icon": "discord",
+      "icon_path": null,
+      "cmd": "discord",
+      "color": [0.35, 0.40, 0.90, 1.0]
+    },
+    {
+      "name": "Teams",
+      "icon": "teams-for-linux",
+      "icon_path": "~/.local/share/icons/hicolor/48x48/apps/chrome-ompifgpmddkgmclendfeacglnodjjndh-Default.png",
+      "cmd": "google-chrome --app-id=ompifgpmddkgmclendfeacglnodjjndh",
+      "color": [0.28, 0.40, 0.82, 1.0]
+    },
+    {
+      "name": "VSCode",
+      "icon": "code",
+      "icon_path": "/usr/share/pixmaps/vscode.png",
+      "cmd": "code",
+      "color": [0.14, 0.53, 0.90, 1.0]
+    },
+    {
+      "name": "WebStorm",
+      "icon": "webstorm",
+      "icon_path": "~/.local/share/icons/hicolor/scalable/apps/jetbrains-webstorm-75ff27a5-95d3-4d42-a65b-558f0117f3d0.svg",
+      "cmd": "webstorm.sh",
+      "color": [0.92, 0.42, 0.62, 1.0]
+    }
+  ],
+
+  "system_toggles": [
+    {
+      "label": "Wi-Fi",
+      "icon": "wifi",
+      "cmd_on": ["nmcli", "radio", "wifi", "on"],
+      "cmd_off": ["nmcli", "radio", "wifi", "off"]
+    },
+    {
+      "label": "Bluetooth",
+      "icon": "bluetooth",
+      "cmd_on": ["bluetoothctl", "power", "on"],
+      "cmd_off": ["bluetoothctl", "power", "off"]
+    },
+    {
+      "label": "Night",
+      "icon": "moon",
+      "cmd_on": ["redshift", "-O", "3500"],
+      "cmd_off": ["redshift", "-x"]
+    },
+    {
+      "label": "Mute",
+      "icon": "speaker",
+      "cmd_on": ["pactl", "set-sink-mute", "@DEFAULT_SINK@", "1"],
+      "cmd_off": ["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"]
+    }
+  ],
+
+  "system_actions": [
+    {
+      "label": "Shutdown",
+      "icon": "power",
+      "cmd": ["systemctl", "poweroff"],
+      "color": [0.90, 0.35, 0.45, 1.0],
+      "confirm": true
+    },
+    {
+      "label": "Restart",
+      "icon": "restart",
+      "cmd": ["systemctl", "reboot"],
+      "color": [0.40, 0.85, 0.85, 1.0],
+      "confirm": true
+    },
+    {
+      "label": "Lock",
+      "icon": "lock",
+      "cmd": ["gnome-screensaver-command", "--lock"],
+      "color": [0.92, 0.42, 0.62, 1.0],
+      "confirm": false
+    },
+    {
+      "label": "Logout",
+      "icon": "logout",
+      "cmd": ["gnome-session-quit", "--logout", "--no-prompt"],
+      "color": [0.35, 0.85, 0.55, 1.0],
+      "confirm": true
+    }
+  ],
+
+  "files": [
+    {"label": "Home", "path": "~", "icon": "home"},
+    {"label": "My", "path": "~/My", "icon": "folder"},
+    {"label": "Downloads", "path": "~/Downloads", "icon": "downloads"},
+    {"label": "Work", "path": "~/My/Work/Code", "icon": "folder"},
+    {"label": "Projects", "path": "~/My/Dev/Projects", "icon": "folder"},
+    {"label": "College", "path": "~/My/college", "icon": "folder"}
+
+  ],
+
+  "colors": {
+    "bg":     [0.07, 0.07, 0.09, 0.96],
+    "card":   [0.10, 0.10, 0.13, 1.00],
+    "card2":  [0.13, 0.13, 0.17, 1.00],
+    "border": [1.0,  1.0,  1.0,  0.06],
+    "pink":   [0.92, 0.42, 0.62, 1.00],
+    "cyan":   [0.40, 0.85, 0.85, 1.00],
+    "white":  [1.0,  1.0,  1.0,  1.00],
+    "grey":   [1.0,  1.0,  1.0,  0.55],
+    "dim":    [1.0,  1.0,  1.0,  0.28],
+    "red":    [0.90, 0.35, 0.45, 1.00],
+    "green":  [0.35, 0.85, 0.55, 1.00],
+    "orange": [1.00, 0.65, 0.30, 1.00],
+    "purple": [0.60, 0.35, 0.90, 1.00]
+  }
+}
