@@ -1,4 +1,4 @@
-"""Left panel: Profile, Weather, System Controls."""
+"""Left panel: Profile, Weather, Toggles."""
 
 import math
 import os
@@ -8,7 +8,7 @@ import cairo
 from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 
 from widgets.config import (CFG, CARD, CARD2, PINK, CYAN, WHITE, GREY, DIM,
-                            BORDER, PURPLE, GREEN, ORANGE, RED)
+                            BORDER, PURPLE)
 from widgets.helpers import rr, draw_card, sc, _pb_to_surface
 from widgets.icons import draw_icon
 
@@ -22,6 +22,10 @@ except ImportError:
 class LeftPanel(Gtk.DrawingArea):
     PW, PH = 300, 560
 
+    _TOG_CARD_Y = 355
+    _TOG_CELL_H = 52
+    _TOG_CELL_GAP = 8
+
     def __init__(self):
         super().__init__()
         self.set_size_request(self.PW, self.PH)
@@ -30,9 +34,8 @@ class LeftPanel(Gtk.DrawingArea):
         self._condition = ""
         self._wcode = 116
         self._toggles = CFG["system_toggles"]
-        self._actions = CFG["system_actions"]
         self._tog_states = [False] * len(self._toggles)
-        self._hover = -1   # unified hover index (0..3 toggles, 4..7 actions)
+        self._hover = -1
         self._profile = self._load_profile()
         self.set_events(
             Gdk.EventMask.BUTTON_PRESS_MASK |
@@ -60,10 +63,8 @@ class LeftPanel(Gtk.DrawingArea):
 
     def _fetch_weather(self):
         if not HAS_REQUESTS:
-            self._temp = "--C"
-            self._condition = "install requests"
-            GLib.idle_add(self.queue_draw)
-            return
+            self._temp = "--C"; self._condition = "install requests"
+            GLib.idle_add(self.queue_draw); return
         try:
             data = requests.get(
                 f"https://wttr.in/{CFG['city']}?format=j1", timeout=6).json()
@@ -72,83 +73,48 @@ class LeftPanel(Gtk.DrawingArea):
             self._condition = cur["weatherDesc"][0]["value"]
             self._wcode = int(cur["weatherCode"])
         except Exception:
-            self._temp = "--C"
-            self._condition = "Unavailable"
+            self._temp = "--C"; self._condition = "Unavailable"
         GLib.idle_add(self.queue_draw)
 
     def _detect_states(self):
         try:
             out = subprocess.check_output(
-                ["nmcli", "radio", "wifi"],
-                stderr=subprocess.DEVNULL).decode().strip()
+                ["nmcli", "radio", "wifi"], stderr=subprocess.DEVNULL).decode().strip()
             self._tog_states[0] = (out == "enabled")
-        except Exception:
-            pass
+        except Exception: pass
         try:
             out = subprocess.check_output(
-                ["bluetoothctl", "show"],
-                stderr=subprocess.DEVNULL).decode()
+                ["bluetoothctl", "show"], stderr=subprocess.DEVNULL).decode()
             self._tog_states[1] = "Powered: yes" in out
-        except Exception:
-            pass
+        except Exception: pass
         GLib.idle_add(self.queue_draw)
 
-    # ── System control rects ──
-    # 4 toggles (2×2) + 4 actions (2×2), all inside the sys card
-
-    _SYS_CARD_Y = 360   # top of the system card
-    _SYS_CARD_H = 188
-
-    def _cell_rect(self, idx):
-        """idx 0-3 = toggles, 4-7 = actions. Returns (x, y, w, h)."""
+    def _tog_rect(self, i):
         pad = 12
-        card_x, card_y = pad, self._SYS_CARD_Y
         cw = self.PW - pad * 2
-        bw = (cw - 6) // 2
-        bh = 40
-        section = idx // 4          # 0=toggles, 1=actions
-        i = idx % 4
+        bw = (cw - self._TOG_CELL_GAP) // 2
         col = i % 2
         row = i // 2
-        sec_top = card_y + 18 + section * (bh * 2 + 6 + 10)
-        x = card_x + col * (bw + 6)
-        y = sec_top + row * (bh + 6)
-        return x, y, bw, bh
+        x = pad + col * (bw + self._TOG_CELL_GAP)
+        y = self._TOG_CARD_Y + 10 + row * (self._TOG_CELL_H + self._TOG_CELL_GAP)
+        return x, y, bw, self._TOG_CELL_H
 
     def _on_click(self, w, event):
-        for idx in range(len(self._toggles)):
-            x, y, bw, bh = self._cell_rect(idx)
+        for i, tog in enumerate(self._toggles):
+            x, y, bw, bh = self._tog_rect(i)
             if x <= event.x <= x + bw and y <= event.y <= y + bh:
-                self._tog_states[idx] = not self._tog_states[idx]
-                on = self._tog_states[idx]
-                t = self._toggles[idx]
-                cmd = t["cmd_on"] if on else t["cmd_off"]
+                self._tog_states[i] = not self._tog_states[i]
+                on = self._tog_states[i]
+                cmd = tog["cmd_on"] if on else tog["cmd_off"]
                 subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
-                self.queue_draw()
-                return
-        for i, act in enumerate(self._actions):
-            x, y, bw, bh = self._cell_rect(4 + i)
-            if x <= event.x <= x + bw and y <= event.y <= y + bh:
-                if act.get("confirm"):
-                    d = Gtk.MessageDialog(
-                        message_type=Gtk.MessageType.WARNING,
-                        buttons=Gtk.ButtonsType.OK_CANCEL,
-                        text=f"{act['label']}?")
-                    r = d.run(); d.destroy()
-                    if r != Gtk.ResponseType.OK:
-                        return
-                try:
-                    subprocess.Popen(act["cmd"])
-                except Exception as e:
-                    print(f"Sys error: {e}")
-                return
+                self.queue_draw(); return
 
     def _on_motion(self, w, event):
         h = -1
-        for idx in range(len(self._toggles) + len(self._actions)):
-            x, y, bw, bh = self._cell_rect(idx)
+        for i in range(len(self._toggles)):
+            x, y, bw, bh = self._tog_rect(i)
             if x <= event.x <= x + bw and y <= event.y <= y + bh:
-                h = idx; break
+                h = i; break
         if h != self._hover:
             self._hover = h; self.queue_draw()
 
@@ -166,8 +132,7 @@ class LeftPanel(Gtk.DrawingArea):
         cr.arc(img_cx, img_cy, img_r, 0, 2 * math.pi)
         cr.clip()
         if self._profile:
-            sw = self._profile.get_width()
-            sh = self._profile.get_height()
+            sw, sh = self._profile.get_width(), self._profile.get_height()
             sc_ = (img_r * 2) / min(sw, sh)
             cr.translate(img_cx - sw * sc_ / 2, img_cy - sh * sc_ / 2)
             cr.scale(sc_, sc_)
@@ -198,18 +163,18 @@ class LeftPanel(Gtk.DrawingArea):
         cr.move_to(pad, 212); cr.line_to(w - pad, 212); cr.stroke()
 
         # ── Weather ──
-        draw_card(cr, pad, 220, w - pad * 2, 124, 12, CARD2)
-        self._draw_weather_icon(cr, pad + 50, 278, 36)
+        draw_card(cr, pad, 220, w - pad * 2, 120, 12, CARD2)
+        self._draw_weather_icon(cr, pad + 50, 275, 36)
 
         cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(32); sc(cr, WHITE)
-        cr.move_to(pad + 90, 274); cr.show_text(self._temp)
+        cr.move_to(pad + 90, 272); cr.show_text(self._temp)
         deg_x = pad + 90 + cr.text_extents(self._temp).width + 2
-        cr.set_font_size(14); cr.move_to(deg_x, 254); cr.show_text("o")
+        cr.set_font_size(14); cr.move_to(deg_x, 252); cr.show_text("o")
 
         cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
         cr.set_font_size(11); sc(cr, PINK)
-        cr.move_to(pad + 90, 294); cr.show_text(self._condition[:22])
+        cr.move_to(pad + 90, 292); cr.show_text(self._condition[:22])
 
         msgs = {"Clear": "Perfect day outside!", "Sunny": "Go for a walk!",
                 "Cloud": "Maybe bring a jacket.", "Rain": "Grab your umbrella!",
@@ -218,63 +183,38 @@ class LeftPanel(Gtk.DrawingArea):
                     if k.lower() in self._condition.lower()), "Have a great day!")
         cr.set_font_size(10); sc(cr, GREY)
         me = cr.text_extents(msg)
-        cr.move_to(w / 2 - me.width / 2, 334); cr.show_text(msg)
+        cr.move_to(w / 2 - me.width / 2, 330); cr.show_text(msg)
 
-        # ── System Controls ──
-        draw_card(cr, pad, self._SYS_CARD_Y, w - pad * 2,
-                  self._SYS_CARD_H, 12, CARD2)
+        # ── Toggles ──
+        n_rows = math.ceil(len(self._toggles) / 2)
+        card_h = 10 + n_rows * (self._TOG_CELL_H + self._TOG_CELL_GAP) - self._TOG_CELL_GAP + 10
+        draw_card(cr, pad, self._TOG_CARD_Y, w - pad * 2, card_h, 12, CARD2)
 
-        cr.set_font_size(8); sc(cr, DIM)
-        cr.move_to(pad + 6, self._SYS_CARD_Y + 12); cr.show_text("TOGGLES")
-
-        for idx, tog in enumerate(self._toggles):
-            x, y, bw, bh = self._cell_rect(idx)
-            is_on = self._tog_states[idx]
-            is_h = (self._hover == idx)
-            ic = PINK if is_on else (GREY if is_h else DIM)
+        for i, tog in enumerate(self._toggles):
+            x, y, bw, bh = self._tog_rect(i)
+            is_on = self._tog_states[i]
+            is_h = (self._hover == i)
             icon_name = tog["icon"]
             if icon_name == "speaker" and is_on:
                 icon_name = "speaker_muted"
+            ic = PINK if is_on else (GREY if is_h else DIM)
 
-            rr(cr, x, y, bw, bh, 8)
-            cr.set_source_rgba(*PINK[:3], 0.20 if is_on else (0.10 if is_h else 0.04))
+            # Cell background
+            rr(cr, x, y, bw, bh, 10)
+            cr.set_source_rgba(*PINK[:3], 0.22 if is_on else (0.10 if is_h else 0.05))
             cr.fill()
             if is_on or is_h:
-                rr(cr, x, y, bw, bh, 8)
+                rr(cr, x, y, bw, bh, 10)
                 sc(cr, PINK if is_on else GREY)
-                cr.set_line_width(1.2); cr.stroke()
+                cr.set_line_width(1.5); cr.stroke()
 
-            draw_icon(cr, icon_name, x + 20, y + bh / 2 - 4, 16, ic)
+            # Large icon
+            draw_icon(cr, icon_name, x + 28, y + bh / 2, 22, ic)
+
+            # Label
             cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-            cr.set_font_size(9); sc(cr, ic)
-            te = cr.text_extents(tog["label"])
-            cr.move_to(x + 34, y + bh / 2 + 4); cr.show_text(tog["label"])
-
-        # Divider between toggles and actions
-        div_y = self._SYS_CARD_Y + 18 + 40 * 2 + 6 * 2 + 4
-        sc(cr, BORDER); cr.set_line_width(1)
-        cr.move_to(pad + 6, div_y); cr.line_to(w - pad - 6, div_y); cr.stroke()
-
-        cr.set_font_size(8); sc(cr, DIM)
-        cr.move_to(pad + 6, div_y + 10); cr.show_text("ACTIONS")
-
-        for i, act in enumerate(self._actions):
-            idx = 4 + i
-            x, y, bw, bh = self._cell_rect(idx)
-            is_h = (self._hover == idx)
-            bc = tuple(act.get("color", GREY))
-            ic = bc if is_h else GREY
-
-            rr(cr, x, y, bw, bh, 8)
-            cr.set_source_rgba(*bc[:3], 0.15 if is_h else 0.04); cr.fill()
-            if is_h:
-                rr(cr, x, y, bw, bh, 8)
-                sc(cr, bc); cr.set_line_width(1.2); cr.stroke()
-
-            draw_icon(cr, act["icon"], x + 20, y + bh / 2 - 4, 16, ic)
-            cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-            cr.set_font_size(9); sc(cr, ic)
-            cr.move_to(x + 34, y + bh / 2 + 4); cr.show_text(act["label"])
+            cr.set_font_size(13); sc(cr, WHITE if is_on else ic)
+            cr.move_to(x + 46, y + bh / 2 + 5); cr.show_text(tog["label"])
 
     def _draw_weather_icon(self, cr, cx, cy, size):
         code = self._wcode
@@ -284,41 +224,38 @@ class LeftPanel(Gtk.DrawingArea):
             cr.set_line_width(2.5)
             for i in range(8):
                 a = i * math.pi / 4
-                r1, r2 = size * 0.5, size * 0.7
-                cr.move_to(cx + r1 * math.cos(a), cy + r1 * math.sin(a))
-                cr.line_to(cx + r2 * math.cos(a), cy + r2 * math.sin(a))
+                cr.move_to(cx + size*0.5*math.cos(a), cy + size*0.5*math.sin(a))
+                cr.line_to(cx + size*0.7*math.cos(a), cy + size*0.7*math.sin(a))
                 cr.stroke()
         elif code in (116, 119, 122):
             sc(cr, GREY)
-            cr.arc(cx - size * 0.15, cy, size * 0.35, 0, 2 * math.pi); cr.fill()
-            cr.arc(cx + size * 0.2, cy - size * 0.05, size * 0.28, 0, 2 * math.pi); cr.fill()
-            cr.arc(cx + size * 0.1, cy + size * 0.15, size * 0.25, 0, 2 * math.pi); cr.fill()
-            cr.rectangle(cx - size * 0.35, cy, size * 0.7, size * 0.3); cr.fill()
+            cr.arc(cx-size*0.15, cy, size*0.35, 0, 2*math.pi); cr.fill()
+            cr.arc(cx+size*0.2, cy-size*0.05, size*0.28, 0, 2*math.pi); cr.fill()
+            cr.arc(cx+size*0.1, cy+size*0.15, size*0.25, 0, 2*math.pi); cr.fill()
+            cr.rectangle(cx-size*0.35, cy, size*0.7, size*0.3); cr.fill()
         elif code in (176, 263, 293, 296, 299, 302, 356):
             sc(cr, GREY)
-            cr.arc(cx - size * 0.1, cy - size * 0.15, size * 0.3, 0, 2 * math.pi); cr.fill()
-            cr.arc(cx + size * 0.2, cy - size * 0.1, size * 0.22, 0, 2 * math.pi); cr.fill()
-            cr.rectangle(cx - size * 0.3, cy - size * 0.05, size * 0.6, size * 0.2); cr.fill()
+            cr.arc(cx-size*0.1, cy-size*0.15, size*0.3, 0, 2*math.pi); cr.fill()
+            cr.arc(cx+size*0.2, cy-size*0.1, size*0.22, 0, 2*math.pi); cr.fill()
+            cr.rectangle(cx-size*0.3, cy-size*0.05, size*0.6, size*0.2); cr.fill()
             sc(cr, CYAN); cr.set_line_width(2)
             for dx in [-0.15, 0.05, 0.25]:
-                cr.move_to(cx + size * dx, cy + size * 0.25)
-                cr.line_to(cx + size * dx - size * 0.08, cy + size * 0.5)
-                cr.stroke()
+                cr.move_to(cx+size*dx, cy+size*0.25)
+                cr.line_to(cx+size*dx-size*0.08, cy+size*0.5); cr.stroke()
         elif code in (200, 389):
             sc(cr, GREY)
-            cr.arc(cx, cy - size * 0.2, size * 0.3, 0, 2 * math.pi); cr.fill()
+            cr.arc(cx, cy-size*0.2, size*0.3, 0, 2*math.pi); cr.fill()
             sc(cr, (1.0, 0.85, 0.3, 1.0)); cr.set_line_width(2.5)
-            cr.move_to(cx + size * 0.05, cy + size * 0.05)
-            cr.line_to(cx - size * 0.1, cy + size * 0.35)
-            cr.line_to(cx + size * 0.05, cy + size * 0.35)
-            cr.line_to(cx - size * 0.05, cy + size * 0.6)
-            cr.stroke()
+            cr.move_to(cx+size*0.05, cy+size*0.05)
+            cr.line_to(cx-size*0.1, cy+size*0.35)
+            cr.line_to(cx+size*0.05, cy+size*0.35)
+            cr.line_to(cx-size*0.05, cy+size*0.6); cr.stroke()
         elif code in (227, 230):
             sc(cr, WHITE)
             for i in range(6):
                 a = i * math.pi / 3
                 cr.move_to(cx, cy)
-                cr.line_to(cx + size * 0.5 * math.cos(a), cy + size * 0.5 * math.sin(a))
+                cr.line_to(cx+size*0.5*math.cos(a), cy+size*0.5*math.sin(a))
             cr.set_line_width(2); cr.stroke()
         else:
             draw_icon(cr, "moon", cx, cy, size * 1.4, PINK)

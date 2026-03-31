@@ -320,11 +320,6 @@ class CenterPanel(Gtk.DrawingArea):
 
     def _draw_music(self, cr, ox, oy, w, h):
         pad = 16
-        cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(9)
-        sc(cr, DIM)
-        cr.move_to(ox + pad, oy + 14)
-        cr.show_text("NOW PLAYING")
 
         # Thumbnail
         thumb_size = 110

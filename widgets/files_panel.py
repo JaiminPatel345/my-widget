@@ -72,13 +72,6 @@ class FilesPanel(Gtk.DrawingArea):
         w, h = self.PW, self.PH
         pad = self.PAD
 
-        # FILES label
-        cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(9)
-        sc(cr, DIM)
-        cr.move_to(pad, 13)
-        cr.show_text("FILES")
-
         for i, f in enumerate(self._files):
             x, y, bw, bh = self._entry_rect(i)
             is_h = (i == self._hover)
