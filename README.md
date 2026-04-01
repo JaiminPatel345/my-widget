@@ -1,102 +1,95 @@
-# 🖥️ Desktop Widget — Glassmorphism Panel
+# my-widget
+A glassmorphism desktop widget for Ubuntu — live clock, weather, music, app launcher, system controls, and file shortcuts, all in one always-on-desktop panel.
 
-A fully custom always-on-desktop widget for Ubuntu built with Python3 + GTK3.
+![Full Preview](Images/full_preview.png)
 
-## 📦 Contents
-```
-widget.py      ← Main widget (run this)
-setup.sh       ← Install all dependencies
-autostart.sh   ← Make it launch at login
-README.md      ← This file
-```
+---
 
-## 🚀 Quick Start
+## Installation
 
-### 1. Install dependencies
+### 1. Clone the repo
 ```bash
-bash setup.sh
+git clone https://github.com/JaiminPatel345/my-widget.git
+cd my-widget
 ```
 
-### 2. Personalise
-Open `widget.py` and edit the top CONFIG section:
-```python
-USER_NAME   = "Your Name"    # ← your name
-CITY        = "New York"     # ← your city for weather
-PROFILE_IMG = "~/.config/desktop-widget/profile.jpg"  # ← your photo
-```
-
-Copy your profile photo:
+### 2. Install dependencies
 ```bash
-cp /path/to/your/photo.jpg ~/.config/desktop-widget/profile.jpg
+bash install.sh
+```
+This installs all required system packages (GTK3, Cairo, playerctl, redshift, etc.) and optionally sets up autostart.
+
+### 3. Configure
+Edit `config.json` to personalise the widget:
+```json
+{
+  "display_name": "Your Name",
+  "subtitle":     "Your Title",
+  "profile_image": "~/Pictures/profile.jpg",
+  "city": "YourCity",
+
+  "apps": [
+    { "name": "Chrome", "icon": "google-chrome", "cmd": "google-chrome", ... }
+  ],
+
+  "files": [
+    { "label": "Home",      "path": "~",           "icon": "home"   },
+    { "label": "Downloads", "path": "~/Downloads",  "icon": "downloads" }
+  ]
+}
 ```
 
-### 3. Run
+Place your profile photo at `~/Pictures/profile.jpg` (or update the path in `config.json`).
+
+### 4. Run
 ```bash
 python3 widget.py
 ```
 
-### 4. Auto-start on login (optional)
+### 5. Auto-start on login (optional)
 ```bash
 bash autostart.sh
 ```
+The widget will launch automatically every time you log in.
 
 ---
 
-## 🎛️ Widget Sections
-
-| Section       | Details |
-|---------------|---------|
-| 👤 Profile    | Your photo, name, live weather |
-| 🕐 Clock      | Live HH:MM:SS + seconds arc |
-| 📅 Calendar   | Current month, today highlighted |
-| 🎵 Music      | Spinning CD disc, YouTube Music link, play/pause toggle |
-| 🚀 App Launcher | Chrome, Discord, Brave, YouTube, Calculator — one click |
-| 🔘 Toggles   | Wi-Fi, Bluetooth, Night Mode (redshift), Brightness, Power |
-
----
-
-## 🎨 Customisation
-
-### Add/change apps
-Edit the `APPS` list in `widget.py`:
-```python
-APPS = [
-    {"name": "Chrome",  "icon": "🌐", "cmd": "google-chrome"},
-    {"name": "Discord", "icon": "💬", "cmd": "discord"},
-    # add more here...
-]
-```
-
-### Change position
-By default the widget is **centered** on screen. To move it, edit `widget.py`:
-```python
-self.move(100, 100)   # x=100px from left, y=100px from top
-```
-
-### Change size
-```python
-WIDGET_W = 650   # width
-WIDGET_H = 630   # height
-```
-
----
-
-## 🔧 Troubleshooting
-
-**Widget not transparent?**
-Make sure your compositor is running (Compiz, Picom, or GNOME's built-in compositor).
-
-**Weather not loading?**
-Check your internet connection. Weather uses `wttr.in` (free, no API key needed).
-
-**Brightness control not working?**
+## Blur effect (optional)
+For a frosted-glass background, install and configure **picom**:
 ```bash
-sudo usermod -aG video $USER
-# then log out and back in
+sudo apt install picom
+```
+Add to `~/.config/picom.conf`:
+```ini
+blur-method = "dual_kawase";
+blur-strength = 8;
+blur-background = true;
+```
+Then start picom:
+```bash
+picom --daemon
 ```
 
-**Bluetooth toggle not working?**
-```bash
-sudo systemctl enable bluetooth
-sudo systemctl start bluetooth
-```
+---
+
+## What's inside
+
+| Panel | Contents |
+|-------|----------|
+| Left | Profile photo, live weather, system toggles (Wi-Fi, Bluetooth, Night mode, Mute) |
+| Center | Clock + analog hand, calendar, music player with thumbnail, search bar |
+| Right | App launcher, system actions (Shutdown, Restart, Lock, Logout) |
+| Files | Quick-access directory shortcuts |
+
+---
+
+## Dependencies
+- Python 3
+- PyGObject — GTK3, Gdk, Pango, PangoCairo, GdkPixbuf
+- pycairo
+- `playerctl` — music metadata
+- `redshift` — night mode
+- `nmcli` — Wi-Fi toggle
+- `bluetoothctl` — Bluetooth toggle
+- `pactl` — audio mute
+- `requests` (optional) — live weather from wttr.in
