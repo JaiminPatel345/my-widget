@@ -104,7 +104,7 @@
     {
       "label": "Lock",
       "icon": "lock",
-      "cmd": ["loginctl", "lock-session"],
+      "cmd": ["gdbus", "call", "--session", "--dest", "org.gnome.ScreenSaver", "--object-path", "/org/gnome/ScreenSaver", "--method", "org.gnome.ScreenSaver.Lock"],
       "color": [0.55, 0.62, 0.78, 1.0],
       "confirm": false
     },

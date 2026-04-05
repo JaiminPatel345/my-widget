@@ -77,8 +77,14 @@ class RightPanel(Gtk.DrawingArea):
                         text=f"{act['label']}?")
                     r = d.run(); d.destroy()
                     if r != Gtk.ResponseType.OK: return
-                try: subprocess.Popen(act["cmd"])
-                except Exception as e: print(f"Sys error: {e}")
+                cmd = act["cmd"]
+                def _run(c=cmd):
+                    try:
+                        subprocess.run(c, stderr=subprocess.DEVNULL,
+                                       stdout=subprocess.DEVNULL)
+                    except Exception as e:
+                        print(f"Sys error: {e}")
+                threading.Thread(target=_run, daemon=True).start()
                 return
 
     def _on_motion(self, w, event):
