@@ -1,10 +1,68 @@
 """Cairo vector icon drawing — no emoji, no theme dependency."""
 
 import math
+import os
+import cairo
+
+import gi
+gi.require_version('Rsvg', '2.0')
+from gi.repository import Rsvg
+
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icons")
+_SVG_CACHE = {}  # name -> Rsvg.Handle
+
+
+def _load_svg(name):
+    """Load and cache an SVG icon from assets/icons/."""
+    if name in _SVG_CACHE:
+        return _SVG_CACHE[name]
+    path = os.path.join(_ASSETS_DIR, f"{name}.svg")
+    if os.path.exists(path):
+        handle = Rsvg.Handle.new_from_file(path)
+        _SVG_CACHE[name] = handle
+        return handle
+    _SVG_CACHE[name] = None
+    return None
+
+
+def _draw_svg_icon(cr, name, cx, cy, size, color):
+    """Render an SVG icon centered at (cx, cy), tinted with color."""
+    handle = _load_svg(name)
+    if not handle:
+        return False
+
+    ok, svg_w, svg_h = handle.get_intrinsic_size_in_pixels()
+    if not ok or svg_w == 0 or svg_h == 0:
+        return False
+    scale = size / max(svg_w, svg_h)
+
+    # Render SVG to a temporary surface as alpha mask
+    tmp = cairo.ImageSurface(cairo.FORMAT_ARGB32,
+                             int(svg_w * scale + 1), int(svg_h * scale + 1))
+    tcr = cairo.Context(tmp)
+    tcr.scale(scale, scale)
+    handle.render_cairo(tcr)
+
+    # Draw tinted: use SVG as mask, paint with desired color
+    cr.save()
+    ox = cx - (svg_w * scale) / 2
+    oy = cy - (svg_h * scale) / 2
+    cr.set_source_rgba(*color)
+    cr.mask_surface(tmp, ox, oy)
+    cr.restore()
+    return True
+
+
+# SVG icon names — these use SVG files instead of Cairo drawing
+_SVG_ICONS = {"moon", "bluetooth", "speaker", "speaker_muted"}
 
 
 def draw_icon(cr, name, cx, cy, size, color):
     """Draw a vector icon centered at (cx, cy) with given size and color."""
+    # Try SVG first for icons that have SVG assets
+    if name in _SVG_ICONS and _draw_svg_icon(cr, name, cx, cy, size, color):
+        return
+
     cr.save()
     cr.set_source_rgba(*color)
     cr.set_line_width(max(1.5, size * 0.08))

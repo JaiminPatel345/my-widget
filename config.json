@@ -91,28 +91,28 @@
       "label": "Shutdown",
       "icon": "power",
       "cmd": ["systemctl", "poweroff"],
-      "color": [0.90, 0.35, 0.45, 1.0],
+      "color": [0.85, 0.45, 0.45, 1.0],
       "confirm": true
     },
     {
       "label": "Restart",
       "icon": "restart",
       "cmd": ["systemctl", "reboot"],
-      "color": [0.40, 0.85, 0.85, 1.0],
+      "color": [0.42, 0.68, 0.88, 1.0],
       "confirm": true
     },
     {
       "label": "Lock",
       "icon": "lock",
-      "cmd": ["gnome-screensaver-command", "--lock"],
-      "color": [0.92, 0.42, 0.62, 1.0],
+      "cmd": ["loginctl", "lock-session"],
+      "color": [0.55, 0.62, 0.78, 1.0],
       "confirm": false
     },
     {
       "label": "Logout",
       "icon": "logout",
       "cmd": ["gnome-session-quit", "--logout", "--no-prompt"],
-      "color": [0.35, 0.85, 0.55, 1.0],
+      "color": [0.45, 0.75, 0.60, 1.0],
       "confirm": true
     }
   ],
@@ -132,7 +132,7 @@
     "card":   [0.20, 0.21, 0.27, 1.00],
     "card2":  [0.23, 0.24, 0.31, 1.00],
     "border": [1.0,  1.0,  1.0,  0.07],
-    "pink":   [0.90, 0.42, 0.55, 1.00],
+    "pink":   [0.42, 0.68, 0.88, 1.00],
     "cyan":   [0.38, 0.80, 0.80, 1.00],
     "white":  [0.93, 0.94, 0.96, 1.00],
     "grey":   [0.65, 0.67, 0.75, 0.90],
