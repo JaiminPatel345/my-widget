@@ -38,6 +38,8 @@ class CenterPanel(Gtk.DrawingArea):
         self._art_url = ""
         self._art_surf = None   # cached thumbnail surface
         self._progress = 0.0
+        self._position = 0      # microseconds
+        self._length = 0        # microseconds
         self._marquee = 0
         self._search = ""
         self._sfocus = False
@@ -50,7 +52,7 @@ class CenterPanel(Gtk.DrawingArea):
         self.connect("key-press-event", self._on_key)
         GLib.timeout_add(1000, self._clock_tick)
         GLib.timeout_add(50, self._anim_tick)
-        GLib.timeout_add(2000, self._poll_player)
+        GLib.timeout_add(1000, self._poll_player)
         GLib.timeout_add(500, self._blink_cursor)
         self._poll_player()
 
@@ -62,7 +64,6 @@ class CenterPanel(Gtk.DrawingArea):
     def _anim_tick(self):
         if self._playing:
             self._marquee += 1
-            self._progress = (self._progress + 0.001) % 1.0
         self.queue_draw()
         return True
 
@@ -88,6 +89,27 @@ class CenterPanel(Gtk.DrawingArea):
                 art = subprocess.check_output(
                     ["playerctl", "metadata", "mpris:artUrl"],
                     stderr=subprocess.DEVNULL).decode().strip()
+                # Get position (playerctl returns seconds as float)
+                try:
+                    pos_f = float(subprocess.check_output(
+                        ["playerctl", "position"],
+                        stderr=subprocess.DEVNULL).decode().strip())
+                    self._position = int(pos_f * 1_000_000)
+                except Exception:
+                    self._position = 0
+                # Get length (microseconds) from metadata
+                try:
+                    length = int(subprocess.check_output(
+                        ["playerctl", "metadata", "mpris:length"],
+                        stderr=subprocess.DEVNULL).decode().strip())
+                    self._length = length
+                except Exception:
+                    self._length = 0
+                # Compute progress
+                if self._length > 0:
+                    self._progress = min(1.0, self._position / self._length)
+                else:
+                    self._progress = 0.0
                 self._title = t or "YouTube"
                 self._artist = a or "Open in Browser - Music"
                 if art != self._art_url:
@@ -97,6 +119,9 @@ class CenterPanel(Gtk.DrawingArea):
                 self._playing = False
                 self._title = "YouTube"
                 self._artist = "Open in Browser - Music"
+                self._position = 0
+                self._length = 0
+                self._progress = 0.0
             GLib.idle_add(self.queue_draw)
         threading.Thread(target=_do, daemon=True).start()
         return True
@@ -106,7 +131,7 @@ class CenterPanel(Gtk.DrawingArea):
         def _do():
             surf = None
             try:
-                size = 110
+                size = 250
                 if url.startswith("file://"):
                     path = url[7:]
                     pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
@@ -132,21 +157,17 @@ class CenterPanel(Gtk.DrawingArea):
         # Music controls
         mus_y = 210
         mus_h = h - 210 - 78
-        ctl_y = mus_y + mus_h - 44
-        tx = pad + 110 + 14  # thumb_size + gap
-        tw = cw - (tx - pad) - pad
-        ctl_cx = tx + tw / 2
+        ctl_y = mus_y + mus_h - pad - 14
+        ctl_cx = w / 2
 
-        if abs(y - ctl_y) < 26:
-            if abs(x - (ctl_cx - 70)) < 22:
+        if abs(y - ctl_y) < 22:
+            if abs(x - (ctl_cx - 50)) < 20:
                 subprocess.Popen(["playerctl", "previous"])
-            elif abs(x - (ctl_cx - 24)) < 22:
+            elif abs(x - ctl_cx) < 20:
                 subprocess.Popen(["playerctl", "play-pause"])
                 self._playing = not self._playing
-            elif abs(x - (ctl_cx + 22)) < 22:
+            elif abs(x - (ctl_cx + 50)) < 20:
                 subprocess.Popen(["playerctl", "next"])
-            elif abs(x - (ctl_cx + 68)) < 22:
-                subprocess.Popen(["xdg-open", "https://youtube.com"])
             self.queue_draw()
             return
 
@@ -318,107 +339,111 @@ class CenterPanel(Gtk.DrawingArea):
                 col = 0
                 row += 1
 
-    def _draw_music(self, cr, ox, oy, w, h):
-        pad = 16
+    @staticmethod
+    def _fmt_time(us):
+        """Format microseconds as m:ss."""
+        secs = max(0, int(us / 1_000_000))
+        return f"{secs // 60}:{secs % 60:02d}"
 
-        # Thumbnail
-        thumb_size = 110
+    def _draw_music(self, cr, ox, oy, w, h):
+        pad = 14
+        inner_w = w - pad * 2
+
+        # ── Top: Thumbnail (full width, ~55% height) ──
+        thumb_h = int(h * 0.52)
         thumb_x = ox + pad
-        thumb_y = oy + (h - thumb_size) // 2
+        thumb_y = oy + pad
+        thumb_w = inner_w
 
         if self._art_surf:
-            # Rounded clip for thumbnail
             cr.save()
-            _rr_clip(cr, thumb_x, thumb_y, thumb_size, thumb_size, 10)
+            _rr_clip(cr, thumb_x, thumb_y, thumb_w, thumb_h, 10)
             cr.clip()
             sw = self._art_surf.get_width()
             sh = self._art_surf.get_height()
-            scale = thumb_size / max(sw, sh)
-            cr.translate(thumb_x + (thumb_size - sw * scale) / 2,
-                         thumb_y + (thumb_size - sh * scale) / 2)
+            scale = max(thumb_w / sw, thumb_h / sh)
+            cr.translate(thumb_x + (thumb_w - sw * scale) / 2,
+                         thumb_y + (thumb_h - sh * scale) / 2)
             cr.scale(scale, scale)
             cr.set_source_surface(self._art_surf, 0, 0)
             cr.paint()
             cr.restore()
-            # Pink border
-            _rr_clip(cr, thumb_x, thumb_y, thumb_size, thumb_size, 10)
-            sc(cr, PINK)
-            cr.set_line_width(1.5)
-            cr.stroke()
         else:
-            # Placeholder: dark rounded rect with music note
-            rr(cr, thumb_x, thumb_y, thumb_size, thumb_size, 10)
-            cr.set_source_rgba(*PINK[:3], 0.08)
+            rr(cr, thumb_x, thumb_y, thumb_w, thumb_h, 10)
+            cr.set_source_rgba(*PINK[:3], 0.06)
             cr.fill()
-            rr(cr, thumb_x, thumb_y, thumb_size, thumb_size, 10)
-            sc(cr, PINK)
-            cr.set_line_width(1.5)
-            cr.stroke()
-            # Music note (two circles + stem)
-            nx = thumb_x + thumb_size / 2
-            ny = thumb_y + thumb_size / 2
-            sc(cr, PINK)
-            cr.set_line_width(2)
-            cr.arc(nx - 10, ny + 12, 8, 0, 2 * math.pi)
-            cr.fill()
-            cr.arc(nx + 10, ny + 8, 8, 0, 2 * math.pi)
-            cr.fill()
-            cr.set_source_rgba(*PINK[:3], 0.9)
-            cr.move_to(nx - 2, ny + 12)
-            cr.line_to(nx - 2, ny - 12)
-            cr.line_to(nx + 18, ny - 16)
-            cr.line_to(nx + 18, ny + 8)
+            nx, ny = thumb_x + thumb_w / 2, thumb_y + thumb_h / 2
+            sc(cr, DIM); cr.set_line_width(2)
+            cr.arc(nx - 8, ny + 10, 7, 0, 2 * math.pi); cr.fill()
+            cr.arc(nx + 8, ny + 6, 7, 0, 2 * math.pi); cr.fill()
+            cr.set_source_rgba(*DIM[:3], 0.8)
+            cr.move_to(nx - 1, ny + 10); cr.line_to(nx - 1, ny - 10)
+            cr.line_to(nx + 15, ny - 14); cr.line_to(nx + 15, ny + 6)
             cr.stroke()
 
-        # Text (right of thumbnail)
-        tx = thumb_x + thumb_size + 14
-        tw = w - (tx - ox) - pad
+        # ── Bottom: Info + Progress + Controls ──
+        bx = ox + pad
+        by = thumb_y + thumb_h + 10
+        bw = inner_w
 
+        # Title
         title = self._title
-        if len(title) > 20:
+        max_chars = max(16, int(bw / 8))
+        if len(title) > max_chars:
             off = (self._marquee // 3) % (len(title) + 5)
             padded = title + "     "
-            title = (padded * 2)[off:off + 20]
+            title = (padded * 2)[off:off + max_chars]
 
         cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(18)
+        cr.set_font_size(14)
         sc(cr, WHITE)
-        cr.move_to(tx, oy + 50)
-        cr.show_text(title[:20])
+        cr.move_to(bx, by + 14)
+        cr.show_text(title[:max_chars])
 
+        # Artist
         cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(11)
+        cr.set_font_size(10)
         sc(cr, GREY)
-        cr.move_to(tx, oy + 68)
-        cr.show_text(self._artist[:26])
+        cr.move_to(bx, by + 28)
+        cr.show_text(self._artist[:max_chars])
 
         # Progress bar
-        pb_y = oy + 82
-        pb_h = 4
-        rr(cr, tx, pb_y, tw, pb_h, 2)
-        cr.set_source_rgba(1, 1, 1, 0.1)
+        pb_y = by + 38
+        pb_h = 3
+        rr(cr, bx, pb_y, bw, pb_h, 2)
+        cr.set_source_rgba(1, 1, 1, 0.08)
         cr.fill()
         if self._progress > 0:
-            rr(cr, tx, pb_y, max(6, tw * self._progress), pb_h, 2)
+            fill_w = max(4, bw * self._progress)
+            rr(cr, bx, pb_y, fill_w, pb_h, 2)
             sc(cr, PINK)
             cr.fill()
+            cr.arc(bx + fill_w, pb_y + pb_h / 2, 4, 0, 2 * math.pi)
+            sc(cr, PINK); cr.fill()
 
-        # Controls — Cairo vector icons
-        ctl_y = oy + h - 44
-        ctl_cx = tx + tw / 2
+        # Time labels
+        cr.set_font_size(9)
+        sc(cr, DIM)
+        cr.move_to(bx, pb_y + 14)
+        cr.show_text(self._fmt_time(self._position))
+        len_str = self._fmt_time(self._length)
+        le = cr.text_extents(len_str)
+        cr.move_to(bx + bw - le.width, pb_y + 14)
+        cr.show_text(len_str)
 
-        draw_icon(cr, "prev", ctl_cx - 70, ctl_y, 18, GREY)
-        # Play/Pause button with highlight
-        rr(cr, ctl_cx - 24 - 18, ctl_y - 18, 36, 36, 8)
-        cr.set_source_rgba(*PINK[:3], 0.2)
-        cr.fill()
-        rr(cr, ctl_cx - 24 - 18, ctl_y - 18, 36, 36, 8)
-        sc(cr, PINK)
-        cr.set_line_width(1.5)
-        cr.stroke()
+        # Controls — centered
+        ctl_y = oy + h - pad - 14
+        ctl_cx = ox + w / 2
+
+        draw_icon(cr, "prev", ctl_cx - 50, ctl_y, 16, GREY)
+        btn_sz = 30
+        rr(cr, ctl_cx - btn_sz / 2, ctl_y - btn_sz / 2, btn_sz, btn_sz, 8)
+        cr.set_source_rgba(*PINK[:3], 0.18); cr.fill()
+        rr(cr, ctl_cx - btn_sz / 2, ctl_y - btn_sz / 2, btn_sz, btn_sz, 8)
+        sc(cr, PINK); cr.set_line_width(1.2); cr.stroke()
         icon_name = "pause" if self._playing else "play"
-        draw_icon(cr, icon_name, ctl_cx - 24, ctl_y, 20, PINK)
-        draw_icon(cr, "next", ctl_cx + 22, ctl_y, 18, GREY)
+        draw_icon(cr, icon_name, ctl_cx, ctl_y, 16, PINK)
+        draw_icon(cr, "next", ctl_cx + 50, ctl_y, 16, GREY)
 
     def _draw_search(self, cr, ox, oy, w, h):
         pad = 14
